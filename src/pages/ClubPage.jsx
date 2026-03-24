@@ -242,12 +242,12 @@ export default function ClubPage({ clubId, onBack, onEventClick }) {
             </div>
           </section>
         )}
-        {/*
+
         {(club.events||[]).length===0 && (
           <div style={{textAlign:"center",padding:"60px 0",color:C.muted,marginTop:48}}>
             No events added yet.
           </div>
-        )}*/}
+        )}
       </div>
     </div>
   );
@@ -255,10 +255,10 @@ export default function ClubPage({ clubId, onBack, onEventClick }) {
 
 function EventPhotoModal({ ev, onClose }) {
   const photos = ev.photos?.length ? ev.photos
-    : ev.picture_url ? [ev.picture_url] : [];
+    : ev.picture_url ? [{id:null, photo_url:ev.picture_url}] : [];
   const thumb = ev.thumbnail_url ? `${API}${ev.thumbnail_url}` : null;
   const [active, setActive] = useState(0);
-  const allImgs = photos.length ? photos.map(p=>`${API}${p}`) : (thumb ? [thumb] : []);
+  const allImgs = photos.length ? photos.map(p=>`${API}${p.photo_url}`) : (thumb ? [thumb] : []);
   const total = allImgs.length;
 
   const prev = e => { e.stopPropagation(); setActive(i => (i - 1 + total) % total); };
@@ -433,11 +433,13 @@ function EventTile({ ev, isPast, onEventClick }) {
               Register →
             </a>
           )}
+          {/*
           {isPast && (
             <div style={{fontSize:".74rem",color:C.accent,fontWeight:600,marginTop:4}}>
-              {hasPhotos ? " " : "No photos yet"}
+              {hasPhotos ? "Click to view event photos →" : "No photos yet"}
             </div>
-          )}{/*
+          )}
+          
           {!isPast && onEventClick && (
             <div style={{fontSize:".74rem",color:C.accent,fontWeight:600,marginTop:4}}>
               Click to view full details →

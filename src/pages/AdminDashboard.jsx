@@ -82,16 +82,29 @@ function EventForm({ clubId=null, event, onSaved, onCancel }) {
     event_date:event?.event_date||"", event_time:event?.event_time||"",
     location:event?.location||"",
     registration_link:event?.registration_link||"",
+    volunteer_link:event?.volunteer_link||"",
     existing_thumbnail_url:event?.thumbnail_url||"",
   });
   const [coords,setCoords] = useState(event?.coordinators||[]);
   const [thumb,setThumb] = useState(null);
   // Multi-photo state for past events
-  const [newPhotos,setNewPhotos] = useState([]);          // File[] staged to upload
-  const [existingPhotos] = useState(                      // already-saved URLs
+  const [newPhotos,setNewPhotos]      = useState([]);   // File[] staged to upload
+  const [existingPhotos,setExistingPhotos] = useState( // {id, photo_url}[] from DB
     event?.photos?.length ? event.photos :
-    event?.picture_url   ? [event.picture_url] : []
+    event?.picture_url   ? [{id:null, photo_url:event.picture_url}] : []
   );
+
+  const deletePhoto = async (photoId) => {
+    if (!photoId) return;
+    if (!confirm("Remove this photo?")) return;
+    try {
+      const token = localStorage.getItem("cv_token");
+      await fetch(`${API}/api/event-photos/${photoId}`, {
+        method:"DELETE", headers:{Authorization:`Bearer ${token}`}
+      });
+      setExistingPhotos(prev => prev.filter(p => p.id !== photoId));
+    } catch(e) { alert("Failed to delete photo"); }
+  };
   const [saving,setSaving] = useState(false);
   const [error,setError] = useState("");
   const isPast = form.event_date && form.event_date < today;
@@ -152,6 +165,13 @@ function EventForm({ clubId=null, event, onSaved, onCancel }) {
             value={form.registration_link} onChange={e=>setForm({...form,registration_link:e.target.value})}/>
         </div>
 
+        {/* ── Volunteer Form ── */}
+        <div style={{gridColumn:"1/-1",background:C.surface2,borderRadius:12,padding:"16px 18px",marginBottom:4}}>
+          <label style={lbl({marginBottom:4})}>🙋 Volunteer Registration Form <span style={{color:C.muted,textTransform:"none",fontWeight:400}}>(optional)</span></label>
+          <input type="url" style={inp({marginBottom:0})} placeholder="https://forms.google.com/volunteer-form…"
+            value={form.volunteer_link} onChange={e=>setForm({...form,volunteer_link:e.target.value})}/>
+        </div>
+
         {/* ── Thumbnail — always available ── */}
         <div style={{gridColumn:"1/-1"}}>
           <label style={lbl()}>Thumbnail / Icon</label>
@@ -160,9 +180,6 @@ function EventForm({ clubId=null, event, onSaved, onCancel }) {
               style={{width:64,height:64,objectFit:"cover",borderRadius:10,marginBottom:8,display:"block"}}/>
           )}
           <input type="file" accept="image/*" style={inp()} onChange={e=>setThumb(e.target.files[0]||null)}/>
-          <p style={{fontSize:".74rem",color:C.muted,marginTop:-8,marginBottom:12}}>
-            This image will be used as the event card thumbnail.
-          </p>
         </div>
 
         {/* ── Event Gallery Photos — only for past events ── */}
@@ -174,12 +191,21 @@ function EventForm({ clubId=null, event, onSaved, onCancel }) {
                 (past event — shown when users click the card)
               </span>
             </label>
-            {/* Show existing saved photos */}
+            {/* Show existing saved photos with delete button */}
             {existingPhotos.length > 0 && (
               <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10}}>
-                {existingPhotos.map((url,i)=>(
-                  <img key={i} src={`${API}${url}`} alt=""
-                    style={{width:80,height:64,objectFit:"cover",borderRadius:8,border:`1.5px solid ${C.border}`}}/>
+                {existingPhotos.map((p)=>(
+                  <div key={p.id||p.photo_url} style={{position:"relative"}}>
+                    <img src={`${API}${p.photo_url}`} alt=""
+                      style={{width:80,height:64,objectFit:"cover",borderRadius:8,
+                        border:`1.5px solid ${C.border}`,display:"block"}}/>
+                    <button type="button" onClick={()=>deletePhoto(p.id)}
+                      style={{position:"absolute",top:-6,right:-6,width:20,height:20,
+                        borderRadius:"50%",background:"#dc2626",color:"#fff",
+                        border:"2px solid #fff",cursor:"pointer",fontSize:".65rem",
+                        display:"flex",alignItems:"center",justifyContent:"center",
+                        fontWeight:700,lineHeight:1}}>✕</button>
+                  </div>
                 ))}
               </div>
             )}
@@ -596,7 +622,7 @@ function ClubForm({ club, onSaved, onCancel }) {
                 </div>
                 <div style={{gridColumn:"1/-1"}}>
                   <label style={lbl()}>Description</label>
-                  <textarea style={inp({height:80,resize:"vertical"})} placeholder="Who can apply, requirements…"
+                  <textarea style={inp({height:80,resize:"vertical"})} 
                     value={recForm.description} onChange={e=>setRecForm({...recForm,description:e.target.value})}/>
                 </div>
               </div>

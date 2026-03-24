@@ -80,11 +80,12 @@ export default function EventPage({ eventId, eventType = "club", onBack, onClubC
           display:"flex", alignItems:"center", justifyContent:"space-between",
           position:"sticky", top:0, zIndex:100 }}>
         <button onClick={onBack} style={backBtn}>← Back</button>
+        {/*
         {club && onClubClick && (
           <button onClick={() => onClubClick(club.id)} style={ghostBtn}>
             View {club.name} →
           </button>
-        )}
+        )}*/}
       </div>
 
       {/* Hero banner */}
@@ -147,7 +148,7 @@ export default function EventPage({ eventId, eventType = "club", onBack, onClubC
 
         {/* Registration CTA */}
         {ev.registration_link && (
-          <div style={{ marginBottom:36, padding:"28px 32px", background:C.accentBg,
+          <div style={{ marginBottom:24, padding:"24px 28px", background:C.accentBg,
               borderRadius:18, border:`1.5px solid rgba(30,58,138,.2)`,
               display:"flex", alignItems:"center", justifyContent:"space-between",
               flexWrap:"wrap", gap:16 }}>
@@ -164,6 +165,32 @@ export default function EventPage({ eventId, eventType = "club", onBack, onClubC
                 textDecoration:"none", flexShrink:0,
                 display:"inline-flex", alignItems:"center", gap:8 }}>
               Register Now →
+            </a>
+          </div>
+        )}
+
+        {/* Volunteer form */}
+        {ev.volunteer_link && (
+          <div style={{ marginBottom:36, padding:"24px 28px", background:C.accentBg,
+              borderRadius:18, border:`1.5px solid rgba(30,58,138,.2)`,
+              display:"flex", alignItems:"center", justifyContent:"space-between",
+              flexWrap:"wrap", gap:16 }}>
+            <div>
+              <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4 }}>
+                <span style={{ fontSize:"1.1rem" }}>🙋</span>
+                <div style={{ fontFamily:"'Playfair Display',serif", fontSize:"1.1rem",
+                    fontWeight:700 }}>Want to volunteer?</div>
+              </div>
+              <div style={{ fontSize:".84rem", color:C.accent }}>
+                Help make this event happen by signing up as a volunteer.
+              </div>
+            </div>
+            <a href={ev.volunteer_link} target="_blank" rel="noreferrer"
+              style={{ background:C.accent, color:"#fff", padding:"12px 28px",
+                borderRadius:12, fontSize:".92rem", fontWeight:700,
+                textDecoration:"none", flexShrink:0,
+                display:"inline-flex", alignItems:"center", gap:8 }}>
+              Volunteer Sign-Up →
             </a>
           </div>
         )}

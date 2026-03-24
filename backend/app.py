@@ -77,6 +77,8 @@ def init_db():
             event_date TEXT NOT NULL, event_time TEXT,
             location TEXT,
             registration_link TEXT,
+            volunteer_link TEXT,
+            participant_link TEXT,
             thumbnail_url TEXT, picture_url TEXT,
             is_past INTEGER DEFAULT 0,
             created TEXT DEFAULT(datetime('now')),
@@ -95,6 +97,8 @@ def init_db():
             event_date TEXT NOT NULL, event_time TEXT,
             location TEXT,
             registration_link TEXT,
+            volunteer_link TEXT,
+            participant_link TEXT,
             thumbnail_url TEXT, picture_url TEXT,
             is_past INTEGER DEFAULT 0,
             created TEXT DEFAULT(datetime('now'))
@@ -201,6 +205,13 @@ def init_db():
         if "email" not in club_cols:
             c.execute("ALTER TABLE clubs ADD COLUMN email TEXT DEFAULT ''")
             c.commit()
+        # Migrate: add volunteer link to events if missing
+        ev_cols = [r[1] for r in c.execute("PRAGMA table_info(events)").fetchall()]
+        if "volunteer_link" not in ev_cols:
+            c.execute("ALTER TABLE events ADD COLUMN volunteer_link TEXT"); c.commit()
+        gen_cols = [r[1] for r in c.execute("PRAGMA table_info(general_events)").fetchall()]
+        if "volunteer_link" not in gen_cols:
+            c.execute("ALTER TABLE general_events ADD COLUMN volunteer_link TEXT"); c.commit()
         # Migrate: add event_photos table if missing
         c.execute("""CREATE TABLE IF NOT EXISTS event_photos(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -296,6 +307,26 @@ def save_event_photos(eid, event_type="club"):
                     "INSERT INTO event_photos(event_id,event_type,photo_url) VALUES(?,?,?)",
                     (eid, event_type, url))
         c.commit()
+
+@app.route("/api/event-photos/<int:pid>", methods=["DELETE"])
+@admin_required
+def delete_event_photo(pid):
+    with conn() as c:
+        photo = c.execute("SELECT photo_url FROM event_photos WHERE id=?", (pid,)).fetchone()
+        if not photo: return err("Photo not found", 404)
+        # Delete the file from disk
+        try:
+            filepath = os.path.join(BASE, photo["photo_url"].lstrip("/api/uploads/").replace("/", os.sep))
+            # Reconstruct correct path: /api/uploads/events/filename -> uploads/events/filename
+            rel = photo["photo_url"].replace("/api/uploads/", "")
+            full = os.path.join(UPL, rel)
+            if os.path.exists(full):
+                os.remove(full)
+        except Exception:
+            pass  # If file deletion fails, still remove the DB record
+        c.execute("DELETE FROM event_photos WHERE id=?", (pid,))
+        c.commit()
+    return ok({"deleted": pid})
 
 def notify_subscribers(club_id, club_name, event_title, event_date, event_time=None):
     with conn() as c:
@@ -482,8 +513,8 @@ def get_club(cid):
         for ev in evs:
             ev["coordinators"]=rows(c.execute(
                 "SELECT * FROM event_coordinators WHERE event_id=?",(ev["id"],)).fetchall())
-            ev["photos"]=[r["photo_url"] for r in c.execute(
-                "SELECT photo_url FROM event_photos WHERE event_id=? AND event_type='club' ORDER BY id",
+            ev["photos"]=[{"id":r["id"],"photo_url":r["photo_url"]} for r in c.execute(
+                "SELECT id, photo_url FROM event_photos WHERE event_id=? AND event_type='club' ORDER BY id",
                 (ev["id"],)).fetchall()]
         cl["events"]=evs
         cl["recruitments"]=rows(c.execute(
@@ -590,6 +621,7 @@ def create_event(cid):
     time_=request.form.get("event_time","")
     loc=request.form.get("location","")
     reg=request.form.get("registration_link","")
+    vol=request.form.get("volunteer_link","")
     today=datetime.utcnow().strftime("%Y-%m-%d")
     past=1 if date<today else 0
     try: coords=json.loads(request.form.get("coordinators","[]"))
@@ -598,8 +630,8 @@ def create_event(cid):
     pic=save_file(request.files["picture"],"events") if ("picture" in request.files and past) else None
     with conn() as c:
         cur=c.execute("INSERT INTO events(club_id,title,description,event_date,event_time,"
-                      "location,registration_link,thumbnail_url,picture_url,is_past) VALUES(?,?,?,?,?,?,?,?,?,?)",
-                      (cid,title,desc,date,time_,loc,reg,thumb,pic,past))
+                      "location,registration_link,volunteer_link,thumbnail_url,picture_url,is_past) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                      (cid,title,desc,date,time_,loc,reg,vol,thumb,pic,past))
         eid=cur.lastrowid
         for co in coords:
             c.execute("INSERT INTO event_coordinators(event_id,name,position,email,phone) VALUES(?,?,?,?,?)",
@@ -621,6 +653,7 @@ def update_event(eid):
     time_=request.form.get("event_time","")
     loc=request.form.get("location","")
     reg=request.form.get("registration_link","")
+    vol=request.form.get("volunteer_link","")
     today=datetime.utcnow().strftime("%Y-%m-%d")
     past=1 if date<today else 0
     try: coords=json.loads(request.form.get("coordinators","[]"))
@@ -631,8 +664,8 @@ def update_event(eid):
     if "picture" in request.files: pic=save_file(request.files["picture"],"events")
     with conn() as c:
         c.execute("UPDATE events SET title=?,description=?,event_date=?,event_time=?,"
-                  "location=?,registration_link=?,thumbnail_url=?,picture_url=?,is_past=? WHERE id=?",
-                  (title,desc,date,time_,loc,reg,thumb,pic,past,eid))
+                  "location=?,registration_link=?,volunteer_link=?,thumbnail_url=?,picture_url=?,is_past=? WHERE id=?",
+                  (title,desc,date,time_,loc,reg,vol,thumb,pic,past,eid))
         c.execute("DELETE FROM event_coordinators WHERE event_id=?",(eid,))
         for co in coords:
             c.execute("INSERT INTO event_coordinators(event_id,name,position,email,phone) VALUES(?,?,?,?,?)",
@@ -661,8 +694,8 @@ def list_general_events():
         else:
             evs=rows(c.execute("SELECT * FROM general_events ORDER BY event_date").fetchall())
         for ev in evs:
-            ev["photos"]=[r["photo_url"] for r in c.execute(
-                "SELECT photo_url FROM event_photos WHERE event_id=? AND event_type='general' ORDER BY id",
+            ev["photos"]=[{"id":r["id"],"photo_url":r["photo_url"]} for r in c.execute(
+                "SELECT id, photo_url FROM event_photos WHERE event_id=? AND event_type='general' ORDER BY id",
                 (ev["id"],)).fetchall()]
     return ok(evs)
 
@@ -676,14 +709,15 @@ def create_general_event():
     time_=request.form.get("event_time","")
     loc=request.form.get("location","")
     reg=request.form.get("registration_link","")
+    vol=request.form.get("volunteer_link","")
     today=datetime.utcnow().strftime("%Y-%m-%d")
     past=1 if date<today else 0
     thumb=save_file(request.files["thumbnail"],"events") if "thumbnail" in request.files else None
     pic=save_file(request.files["picture"],"events") if ("picture" in request.files and past) else None
     with conn() as c:
         cur=c.execute("INSERT INTO general_events(title,description,event_date,event_time,"
-                      "location,registration_link,thumbnail_url,picture_url,is_past) VALUES(?,?,?,?,?,?,?,?,?)",
-                      (title,desc,date,time_,loc,reg,thumb,pic,past))
+                      "location,registration_link,volunteer_link,thumbnail_url,picture_url,is_past) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                      (title,desc,date,time_,loc,reg,vol,thumb,pic,past))
         eid=cur.lastrowid; c.commit()
     if past:
         save_event_photos(eid, "general")
@@ -706,6 +740,7 @@ def update_general_event(eid):
     time_=request.form.get("event_time","")
     loc=request.form.get("location","")
     reg=request.form.get("registration_link","")
+    vol=request.form.get("volunteer_link","")
     today=datetime.utcnow().strftime("%Y-%m-%d")
     past=1 if date<today else 0
     thumb=request.form.get("existing_thumbnail_url") or None
@@ -714,8 +749,8 @@ def update_general_event(eid):
     if "picture" in request.files: pic=save_file(request.files["picture"],"events")
     with conn() as c:
         c.execute("UPDATE general_events SET title=?,description=?,event_date=?,event_time=?,"
-                  "location=?,registration_link=?,thumbnail_url=?,picture_url=?,is_past=? WHERE id=?",
-                  (title,desc,date,time_,loc,reg,thumb,pic,past,eid))
+                  "location=?,registration_link=?,volunteer_link=?,thumbnail_url=?,picture_url=?,is_past=? WHERE id=?",
+                  (title,desc,date,time_,loc,reg,vol,thumb,pic,past,eid))
         c.commit()
     if past:
         save_event_photos(eid, "general")
