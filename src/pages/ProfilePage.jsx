@@ -18,7 +18,13 @@ function scoreClub(club, interests) {
 
 function scoreEvent(ev, interests) {
   if (!interests.length) return 0;
-  const hay = [ev.title, ev.description, ev.club_name||""].join(" ").toLowerCase();
+  const hay = [
+    ev.title,
+    ev.description,
+    ev.club_name || "",
+    ev.club_department || "",
+    ...(ev.club_tags || []),
+  ].join(" ").toLowerCase();
   return interests.reduce((a,w) => a + (hay.includes(w.toLowerCase())?1:0), 0);
 }
 
@@ -29,9 +35,9 @@ export default function ProfilePage({ onClubClick, onBack }) {
   const [upEvents,   setUpEvents]   = useState([]);
   const [interests,  setInterests]  = useState(user?.interests||[]);
   const [inputI,     setInputI]     = useState("");
-  const [tab,        setTab]        = useState("interests");
   const [saving,     setSaving]     = useState(false);
   const [toast,      setToast]      = useState(null);
+  const [modal,      setModal]      = useState(null);
 
   useEffect(() => { loadAll(); }, []);
 
@@ -46,29 +52,16 @@ export default function ProfilePage({ onClubClick, onBack }) {
       ]);
       setSubs(s);
       setAllClubs(cl);
-      setUpEvents([...ev, ...gen.map(e=>({...e, club_name:"College Event"}))]);
+      // Build a lookup map of club metadata by id
+      const clubMap = Object.fromEntries(cl.map(c => [c.id, c]));
+      // Enrich club events with club tags + department for better interest matching
+      const enrichedEv = ev.map(e => ({
+        ...e,
+        club_tags:       clubMap[e.club_id]?.tags       || [],
+        club_department: clubMap[e.club_id]?.department || "",
+      }));
+      setUpEvents([...enrichedEv, ...gen.map(e=>({...e, club_name:"College Event"}))]);
     } catch(e) { console.error(e); }
-  };
-
-
-
-  const addInterest = () => {
-    const w = inputI.trim().toLowerCase();
-    if (w && !interests.includes(w)) {
-      setInterests([...interests, w]);
-    }
-    setInputI("");
-  };
-
-  const removeInterest = i => setInterests(interests.filter((_,j)=>j!==i));
-
-  const saveInterests = async (list=interests) => {
-    setSaving(true);
-    try {
-      await apiCall("/auth/interests","PUT",{interests:list});
-      setToast("Interest saved!");
-    } catch(e) { setToast("Failed to save"); }
-    finally { setSaving(false); setTimeout(()=>setToast(null),3000); }
   };
 
   const addAndSave = () => {
@@ -81,11 +74,25 @@ export default function ProfilePage({ onClubClick, onBack }) {
     saveInterests(updated);
   };
 
-  // Suggestions based on interests
+  const removeInterest = async (i) => {
+    const updated = interests.filter((_,j)=>j!==i);
+    setInterests(updated);
+    saveInterests(updated);
+  };
+
+  const saveInterests = async (list=interests) => {
+    setSaving(true);
+    try {
+      await apiCall("/auth/interests","PUT",{interests:list});
+      setToast("Interests updated!");
+    } catch(e) { setToast("Failed to save"); }
+    finally { setSaving(false); setTimeout(()=>setToast(null),3000); }
+  };
+
   const suggestedClubs = interests.length
     ? allClubs
         .filter(c=>!subs.find(s=>s.id===c.id))
-        .map(c=>({...c,sc:scoreClub(c,interests)}))
+        .map(c=>({...c, sc:scoreClub(c,interests)}))
         .filter(c=>c.sc>0)
         .sort((a,b)=>b.sc-a.sc)
         .slice(0,6)
@@ -93,28 +100,26 @@ export default function ProfilePage({ onClubClick, onBack }) {
 
   const suggestedEvents = interests.length
     ? upEvents
-        .map(e=>({...e,sc:scoreEvent(e,interests)}))
+        .map(e=>({...e, sc:scoreEvent(e,interests)}))
         .filter(e=>e.sc>0)
         .sort((a,b)=>b.sc-a.sc)
         .slice(0,6)
     : [];
 
-  const [modal, setModal] = useState(null); // "clubs" | "interests" | null
-
   return (
     <div style={{background:C.bg,minHeight:"100vh",fontFamily:"'Plus Jakarta Sans',sans-serif"}}>
+
       {/* Nav */}
       <div style={{background:"rgba(248,247,244,.93)",backdropFilter:"blur(20px)",
           borderBottom:`1px solid ${C.border}`,padding:"0 48px",height:64,
           display:"flex",alignItems:"center",justifyContent:"space-between",
           position:"sticky",top:0,zIndex:100}}>
         <button onClick={onBack} style={backBtn}>← Back to Home</button>
-        <button onClick={()=>{logout();onBack();}} style={{...backBtn}}>
-          Logout
-        </button>
+        <button onClick={()=>{logout();onBack();}} style={backBtn}>Logout</button>
       </div>
 
       <div style={{maxWidth:900,margin:"0 auto",padding:"40px 24px"}}>
+
         {toast && (
           <div style={{position:"fixed",bottom:28,right:28,background:C.greenBg,
               border:`1px solid ${C.green}`,color:C.green,borderRadius:12,
@@ -137,141 +142,285 @@ export default function ProfilePage({ onClubClick, onBack }) {
             <div style={{display:"flex",gap:24}}>
               <button onClick={()=>setModal("clubs")}
                 style={{background:"none",border:"none",padding:0,cursor:"pointer",textAlign:"center"}}>
-                <div style={{fontFamily:"'Playfair Display',serif",fontSize:"1.4rem",fontWeight:900,color:C.ink,lineHeight:1}}>{subs.length}</div>
+                <div style={{fontFamily:"'Playfair Display',serif",fontSize:"1.4rem",
+                    fontWeight:900,color:C.ink,lineHeight:1}}>{subs.length}</div>
                 <div style={{fontSize:".75rem",color:C.muted,marginTop:2}}>My Clubs</div>
               </button>
               <button onClick={()=>setModal("interests")}
                 style={{background:"none",border:"none",padding:0,cursor:"pointer",textAlign:"center"}}>
-                <div style={{fontFamily:"'Playfair Display',serif",fontSize:"1.4rem",fontWeight:900,color:C.ink,lineHeight:1}}>{interests.length}</div>
+                <div style={{fontFamily:"'Playfair Display',serif",fontSize:"1.4rem",
+                    fontWeight:900,color:C.ink,lineHeight:1}}>{interests.length}</div>
                 <div style={{fontSize:".75rem",color:C.muted,marginTop:2}}>Interests</div>
               </button>
             </div>
           </div>
         </div>
 
+        {/* ── MY INTERESTS PANEL ── */}
+        <div style={{background:C.surface,border:`1.5px solid ${C.border}`,
+            borderRadius:16,padding:24,marginBottom:24}}>
+          <h2 style={{fontFamily:"'Playfair Display',serif",fontSize:"1.3rem",
+              fontWeight:700,marginBottom:6}}>💡 My Interests</h2>
+          <p style={{color:C.muted,fontSize:".84rem",marginBottom:16}}>
+            Add interests to get personalised club and event suggestions.
+          </p>
+          <div style={{display:"flex",gap:8,marginBottom:16}}>
+            <input value={inputI} onChange={e=>setInputI(e.target.value)}
+              onKeyDown={e=>e.key==="Enter"&&addAndSave()}
+              placeholder="e.g. coding, music, robotics…"
+              style={{flex:1,background:C.surface2,border:`1.5px solid ${C.border}`,
+                borderRadius:10,padding:"10px 14px",fontSize:".88rem",outline:"none"}}/>
+            <button onClick={addAndSave}
+              style={{background:C.accent,color:"#fff",border:"none",borderRadius:10,
+                padding:"10px 18px",cursor:"pointer",fontWeight:600,fontSize:".88rem"}}>
+              Add
+            </button>
+          </div>
+          {interests.length===0
+            ? <p style={{fontSize:".82rem",color:"#aaa"}}>No interests added yet.</p>
+            : <p style={{fontSize:".82rem",color:C.muted}}>
+                You have <strong style={{color:C.ink}}>{interests.length}</strong> saved interest{interests.length>1?"s":""}.
+                Click <strong>Interests</strong> above to manage them.
+              </p>
+          }
+        </div>
 
-
-        {/* ── INTERESTS PANEL ── */}
-        {tab==="interests" && (
-          <div style={{background:C.surface,border:`1.5px solid ${C.border}`,borderRadius:16,padding:24}}>
-            <h2 style={{fontFamily:"'Playfair Display',serif",fontSize:"1.4rem",fontWeight:700,marginBottom:8}}>
-              💡 My Interests
-            </h2>
+        {/* ── SUGGESTED CLUBS ── */}
+        {suggestedClubs.length > 0 && (
+          <div style={{background:C.surface,border:`1.5px solid ${C.border}`,
+              borderRadius:16,padding:24,marginBottom:24}}>
+            <h2 style={{fontFamily:"'Playfair Display',serif",fontSize:"1.3rem",
+                fontWeight:700,marginBottom:4}}>✨ Suggested Clubs</h2>
             <p style={{color:C.muted,fontSize:".84rem",marginBottom:16}}>
-              Add interests for personalized club and event suggestions.
+              Based on your interests
             </p>
-            <div style={{display:"flex",gap:8,marginBottom:16}}>
-              <input value={inputI} onChange={e=>setInputI(e.target.value)}
-                onKeyDown={e=>e.key==="Enter"&&addAndSave()}
-                placeholder="e.g. coding, music, robotics, photography…"
-                style={{flex:1,background:C.surface2,border:`1.5px solid ${C.border}`,
-                  borderRadius:10,padding:"10px 14px",fontSize:".88rem",outline:"none"}}/>
-              <button onClick={addAndSave}
-                style={{background:C.accent,color:"#fff",border:"none",borderRadius:10,
-                  padding:"10px 18px",cursor:"pointer",fontWeight:600}}>Add</button>
+            <div style={{display:"flex",flexDirection:"column",gap:12}}>
+              {suggestedClubs.map(club=>{
+                const icon = club.icon_url ? `${API}${club.icon_url}` : null;
+                return (
+                  <div key={club.id} onClick={()=>onClubClick(club.id)}
+                    style={{display:"flex",alignItems:"center",gap:14,padding:"14px 16px",
+                      borderRadius:12,border:`1.5px solid ${C.border}`,cursor:"pointer",
+                      background:C.surface,transition:"all .2s"}}
+                    onMouseEnter={e=>{e.currentTarget.style.borderColor=C.accent;e.currentTarget.style.background=C.accentBg;}}
+                    onMouseLeave={e=>{e.currentTarget.style.borderColor=C.border;e.currentTarget.style.background=C.surface;}}>
+                    {icon
+                      ? <img src={icon} alt="" style={{width:46,height:46,borderRadius:10,objectFit:"cover",flexShrink:0}}/>
+                      : <div style={{width:46,height:46,borderRadius:10,background:C.surface2,
+                            display:"flex",alignItems:"center",justifyContent:"center",
+                            fontSize:"1.4rem",flexShrink:0}}>🏛️</div>
+                    }
+                    <div style={{flex:1}}>
+                      <div style={{fontWeight:700,fontSize:".92rem",marginBottom:2}}>{club.name}</div>
+                      <div style={{fontSize:".72rem",color:C.muted}}>{club.department}</div>
+                    </div>
+                    <span style={{color:C.accent,fontSize:"1rem",flexShrink:0}}>→</span>
+                  </div>
+                );
+              })}
             </div>
-            {interests.length===0
-              ? <p style={{fontSize:".82rem",color:"#aaa"}}>No interests added yet.</p>
-              : <p style={{fontSize:".82rem",color:C.muted}}>
-                  You have <strong style={{color:C.ink}}>{interests.length}</strong> saved interests.
-                  Click <strong>Interests</strong> near your name to view or remove them.
-                </p>
-            }
           </div>
         )}
 
-        {/* ── MY CLUBS MODAL ── */}
-        {modal==="clubs" && (
-          <div onClick={()=>setModal(null)} style={{position:"fixed",inset:0,background:"rgba(23,21,15,.5)",
-              backdropFilter:"blur(6px)",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center"}}>
-            <div onClick={e=>e.stopPropagation()} style={{background:C.surface,borderRadius:20,
-                width:"min(540px,92vw)",maxHeight:"80vh",display:"flex",flexDirection:"column",
-                boxShadow:"0 24px 64px rgba(0,0,0,.2)"}}>
-              <div style={{padding:"20px 24px 16px",borderBottom:`1px solid ${C.border}`,
-                  display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-                <span style={{fontFamily:"'Playfair Display',serif",fontSize:"1.2rem",fontWeight:700}}>
-                  My Clubs ({subs.length})
-                </span>
-                <button onClick={()=>setModal(null)} style={{background:C.surface2,border:`1px solid ${C.border}`,
-                    width:32,height:32,borderRadius:8,cursor:"pointer",color:C.muted,fontSize:"1rem"}}>✕</button>
-              </div>
-              <div style={{overflowY:"auto",padding:16,display:"flex",flexDirection:"column",gap:10}}>
-                {subs.length===0 ? (
-                  <div style={{textAlign:"center",padding:"40px 0",color:C.muted}}>
-                    <div style={{fontSize:"2rem",marginBottom:8}}>🏛️</div>
-                    <p>No subscriptions yet.</p>
-                  </div>
-                ) : subs.map(club=>{
-                  const icon = club.icon_url?`${API}${club.icon_url}`:null;
-                  return (
-                    <div key={club.id} onClick={()=>{setModal(null);onClubClick(club.id);}}
-                      style={{display:"flex",gap:12,alignItems:"center",padding:"12px 14px",
-                        borderRadius:12,cursor:"pointer",border:`1.5px solid ${C.border}`,
-                        background:C.surface,transition:"all .2s"}}
-                      onMouseEnter={e=>e.currentTarget.style.borderColor=C.accent}
-                      onMouseLeave={e=>e.currentTarget.style.borderColor=C.border}>
-                      {icon
-                        ?<img src={icon} alt="" style={{width:44,height:44,borderRadius:10,objectFit:"cover",flexShrink:0}}/>
-                        :<div style={{width:44,height:44,borderRadius:10,background:C.surface2,
-                            display:"flex",alignItems:"center",justifyContent:"center",fontSize:"1.4rem",flexShrink:0}}>🏛️</div>
-                      }
-                      <div>
-                        <div style={{fontWeight:700,fontSize:".92rem"}}>{club.name}</div>
-                        <div style={{fontSize:".72rem",color:C.muted}}>{club.department}</div>
+        {/* ── SUGGESTED EVENTS ── */}
+        {suggestedEvents.length > 0 && (
+          <div style={{background:C.surface,border:`1.5px solid ${C.border}`,
+              borderRadius:16,padding:24,marginBottom:24}}>
+            <h2 style={{fontFamily:"'Playfair Display',serif",fontSize:"1.3rem",
+                fontWeight:700,marginBottom:4}}>🎯 Suggested Events</h2>
+            <p style={{color:C.muted,fontSize:".84rem",marginBottom:16}}>
+              Upcoming events matching your interests
+            </p>
+            <div style={{display:"flex",flexDirection:"column",gap:12}}>
+              {suggestedEvents.map((ev,idx)=>{
+                const d = new Date(ev.event_date);
+                return (
+                  <div key={idx} style={{display:"flex",alignItems:"center",gap:14,
+                      padding:"14px 16px",borderRadius:12,
+                      border:`1.5px solid ${C.border}`,background:C.surface}}>
+                    <div style={{width:46,height:46,borderRadius:10,background:C.ink,
+                        display:"flex",flexDirection:"column",alignItems:"center",
+                        justifyContent:"center",flexShrink:0}}>
+                      <span style={{color:"#fff",fontSize:".95rem",fontWeight:700,
+                          fontFamily:"'Playfair Display',serif",lineHeight:1}}>
+                        {d.getDate()}
+                      </span>
+                      <span style={{color:"#aaa",fontSize:".6rem",letterSpacing:1}}>
+                        {MON_S[d.getMonth()].toUpperCase()}
+                      </span>
+                    </div>
+                    <div style={{flex:1}}>
+                      <div style={{fontWeight:700,fontSize:".92rem",marginBottom:2}}>{ev.title}</div>
+                      <div style={{fontSize:".72rem",color:C.muted}}>
+                        {ev.club_name && <span style={{color:C.accent,fontWeight:600}}>{ev.club_name}</span>}
+                        {ev.event_time && <span> · ⏰ {ev.event_time}</span>}
+                        {ev.location   && <span> · 📍 {ev.location}</span>}
                       </div>
                     </div>
-                  );
-                })}
-              </div>
+                    {ev.registration_link && (
+                      <a href={ev.registration_link} target="_blank" rel="noreferrer"
+                        style={{background:C.accent,color:"#fff",padding:"6px 14px",
+                          borderRadius:8,fontSize:".78rem",fontWeight:600,
+                          textDecoration:"none",flexShrink:0}}>
+                        Register →
+                      </a>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}
 
-        {/* ── INTERESTS MODAL ── */}
-        {modal==="interests" && (
-          <div onClick={()=>setModal(null)} style={{position:"fixed",inset:0,background:"rgba(23,21,15,.5)",
-              backdropFilter:"blur(6px)",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center"}}>
-            <div onClick={e=>e.stopPropagation()} style={{background:C.surface,borderRadius:20,
-                width:"min(480px,92vw)",maxHeight:"80vh",display:"flex",flexDirection:"column",
-                boxShadow:"0 24px 64px rgba(0,0,0,.2)"}}>
-              <div style={{padding:"20px 24px 16px",borderBottom:`1px solid ${C.border}`,
-                  display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-                <span style={{fontFamily:"'Playfair Display',serif",fontSize:"1.2rem",fontWeight:700}}>
-                  My Interests ({interests.length})
-                </span>
-                <button onClick={()=>setModal(null)} style={{background:C.surface2,border:`1px solid ${C.border}`,
-                    width:32,height:32,borderRadius:8,cursor:"pointer",color:C.muted,fontSize:"1rem"}}>✕</button>
-              </div>
-              <div style={{overflowY:"auto",padding:20}}>
-                {interests.length===0 ? (
-                  <div style={{textAlign:"center",padding:"40px 0",color:C.muted}}>
-                    <div style={{fontSize:"2rem",marginBottom:8}}>💡</div>
-                    <p>No interests saved yet.</p>
-                  </div>
-                ) : (
-                  <div style={{display:"flex",flexWrap:"wrap",gap:10}}>
-                    {interests.map((w,i)=>(
-                      <span key={i} style={{background:C.accentBg,color:C.accent,
-                          border:"1px solid rgba(184,74,30,.2)",borderRadius:20,
-                          padding:"8px 16px",fontSize:".88rem",fontWeight:600,
-                          display:"flex",alignItems:"center",gap:8}}>
-                        {w}
-                        <span onClick={()=>removeInterest(i)}
-                          style={{cursor:"pointer",opacity:.6,fontSize:".8rem"}}>✕</span>
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
+        {/* No suggestions hint */}
+        {interests.length > 0 && suggestedClubs.length===0 && suggestedEvents.length===0 && (
+          <div style={{background:C.surface,border:`1.5px solid ${C.border}`,borderRadius:16,
+              padding:32,textAlign:"center",color:C.muted}}>
+            <div style={{fontSize:"2rem",marginBottom:8}}>🔍</div>
+            <p style={{fontSize:".88rem"}}>
+              No matching clubs or events found for your interests.<br/>Try adding more keywords.
+            </p>
           </div>
         )}
 
       </div>
+
+      {/* ═══ MY CLUBS MODAL ═══ */}
+      {modal==="clubs" && (
+        <div onClick={()=>setModal(null)} style={{position:"fixed",inset:0,
+            background:"rgba(23,21,15,.5)",backdropFilter:"blur(6px)",
+            zIndex:500,display:"flex",alignItems:"center",justifyContent:"center"}}>
+          <div onClick={e=>e.stopPropagation()} style={{background:C.surface,borderRadius:20,
+              width:"min(540px,92vw)",maxHeight:"80vh",display:"flex",flexDirection:"column",
+              boxShadow:"0 24px 64px rgba(0,0,0,.2)"}}>
+            <div style={{padding:"20px 24px 16px",borderBottom:`1px solid ${C.border}`,
+                display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+              <span style={{fontFamily:"'Playfair Display',serif",fontSize:"1.2rem",fontWeight:700}}>
+                My Clubs ({subs.length})
+              </span>
+              <button onClick={()=>setModal(null)} style={{background:C.surface2,
+                  border:`1px solid ${C.border}`,width:32,height:32,borderRadius:8,
+                  cursor:"pointer",color:C.muted,fontSize:"1rem"}}>✕</button>
+            </div>
+            <div style={{overflowY:"auto",padding:16,display:"flex",flexDirection:"column",gap:10}}>
+              {subs.length===0 ? (
+                <div style={{textAlign:"center",padding:"40px 0",color:C.muted}}>
+                  <div style={{fontSize:"2rem",marginBottom:8}}>🏛️</div>
+                  <p>No subscriptions yet.</p>
+                </div>
+              ) : subs.map(club=>{
+                const icon = club.icon_url ? `${API}${club.icon_url}` : null;
+                return (
+                  <div key={club.id} onClick={()=>{setModal(null);onClubClick(club.id);}}
+                    style={{display:"flex",gap:12,alignItems:"center",padding:"12px 14px",
+                      borderRadius:12,cursor:"pointer",border:`1.5px solid ${C.border}`,
+                      background:C.surface,transition:"all .2s"}}
+                    onMouseEnter={e=>e.currentTarget.style.borderColor=C.accent}
+                    onMouseLeave={e=>e.currentTarget.style.borderColor=C.border}>
+                    {icon
+                      ? <img src={icon} alt="" style={{width:44,height:44,borderRadius:10,objectFit:"cover",flexShrink:0}}/>
+                      : <div style={{width:44,height:44,borderRadius:10,background:C.surface2,
+                            display:"flex",alignItems:"center",justifyContent:"center",
+                            fontSize:"1.4rem",flexShrink:0}}>🏛️</div>
+                    }
+                    <div style={{flex:1}}>
+                      <div style={{fontWeight:700,fontSize:".92rem"}}>{club.name}</div>
+                      <div style={{fontSize:".72rem",color:C.muted}}>{club.department}</div>
+                    </div>
+                    <span style={{color:C.accent,fontSize:".88rem"}}>→</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══ INTERESTS MODAL ═══ */}
+      {modal==="interests" && (
+        <div onClick={()=>setModal(null)} style={{position:"fixed",inset:0,
+            background:"rgba(23,21,15,.5)",backdropFilter:"blur(6px)",
+            zIndex:500,display:"flex",alignItems:"center",justifyContent:"center"}}>
+          <div onClick={e=>e.stopPropagation()} style={{background:C.surface,borderRadius:20,
+              width:"min(500px,92vw)",maxHeight:"82vh",display:"flex",flexDirection:"column",
+              boxShadow:"0 24px 64px rgba(0,0,0,.2)"}}>
+
+            {/* Header */}
+            <div style={{padding:"22px 24px 16px",borderBottom:`1px solid ${C.border}`,
+                display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+              <div>
+                <div style={{fontFamily:"'Playfair Display',serif",fontSize:"1.2rem",fontWeight:700}}>
+                  💡 My Interests
+                </div>
+                <div style={{fontSize:".78rem",color:C.muted,marginTop:3}}>
+                  {interests.length} saved · used for personalised suggestions
+                </div>
+              </div>
+              <button onClick={()=>setModal(null)} style={{background:C.surface2,
+                  border:`1px solid ${C.border}`,width:32,height:32,borderRadius:8,
+                  cursor:"pointer",color:C.muted,fontSize:"1rem"}}>✕</button>
+            </div>
+
+            {/* Vertical list */}
+            <div style={{overflowY:"auto",padding:"16px 20px",flex:1}}>
+              {interests.length===0 ? (
+                <div style={{textAlign:"center",padding:"40px 0",color:C.muted}}>
+                  <div style={{fontSize:"2rem",marginBottom:8}}>💡</div>
+                  <p style={{fontSize:".88rem"}}>No interests saved yet.<br/>Add one below.</p>
+                </div>
+              ) : (
+                <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                  {interests.map((w,i)=>(
+                    <div key={i} style={{display:"flex",alignItems:"center",
+                        justifyContent:"space-between",padding:"12px 16px",
+                        borderRadius:12,border:`1.5px solid ${C.border}`,
+                        background:C.surface}}>
+                      <div style={{display:"flex",alignItems:"center",gap:10}}>
+                        <div style={{width:8,height:8,borderRadius:"50%",
+                            background:C.accent,flexShrink:0}}/>
+                        <span style={{fontSize:".92rem",fontWeight:600,
+                            color:C.ink,textTransform:"capitalize"}}>{w}</span>
+                      </div>
+                      <button onClick={()=>removeInterest(i)}
+                        style={{background:"none",border:`1px solid ${C.border}`,
+                          borderRadius:8,padding:"5px 14px",cursor:"pointer",
+                          fontSize:".78rem",color:C.muted,fontWeight:500,
+                          transition:"all .15s"}}
+                        onMouseEnter={e=>{e.currentTarget.style.background=C.surface2;e.currentTarget.style.color=C.ink;}}
+                        onMouseLeave={e=>{e.currentTarget.style.background="none";e.currentTarget.style.color=C.muted;}}>
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Add input pinned to bottom */}
+            <div style={{padding:"14px 20px",borderTop:`1px solid ${C.border}`,
+                display:"flex",gap:8}}>
+              <input value={inputI} onChange={e=>setInputI(e.target.value)}
+                onKeyDown={e=>e.key==="Enter"&&addAndSave()}
+                placeholder="Add a new interest…"
+                style={{flex:1,background:C.surface2,border:`1.5px solid ${C.border}`,
+                  borderRadius:10,padding:"9px 14px",fontSize:".88rem",outline:"none"}}/>
+              <button onClick={addAndSave}
+                style={{background:C.accent,color:"#fff",border:"none",borderRadius:10,
+                  padding:"9px 18px",cursor:"pointer",fontWeight:600,fontSize:".88rem"}}>
+                Add
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
+
 const backBtn = {
-  background:C.accentBg,color:C.accent,border:`1px solid ${C.accent}`,
-  borderRadius:8,padding:"7px 16px",cursor:"pointer",fontSize:".84rem",fontWeight:600,
+  background:"#dbeafe", color:"#1e3a8a", border:"1px solid #1e3a8a",
+  borderRadius:8, padding:"7px 16px", cursor:"pointer",
+  fontSize:".84rem", fontWeight:600,
 };

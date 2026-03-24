@@ -3,6 +3,7 @@ import { AuthProvider, useAuth, apiCall } from "./context/AuthContext";
 import ClubPage       from "./pages/ClubPage";
 import ProfilePage    from "./pages/ProfilePage";
 import AdminDashboard from "./pages/AdminDashboard";
+import EventPage      from "./pages/EventPage";
 
 const API_BASE = "http://localhost:8000";
 
@@ -22,6 +23,7 @@ if (!document.getElementById("cv-gf")) {
     @keyframes fadeIn{from{opacity:0}to{opacity:1}}
     @keyframes popIn{from{opacity:0;transform:scale(.96)}to{opacity:1;transform:scale(1)}}
     @keyframes dropIn{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}
+    @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
   `;
   document.head.appendChild(s);
 }
@@ -385,37 +387,60 @@ function ClubCard({ club, score=0, onClick }) {
 }
 
 /* ── Upcoming Event Card ────────────────────────────────────────────────── */
-function EventCard({ ev }) {
+function EventCard({ ev, onClick }) {
   const [hov,setHov]=useState(false);
   const d = new Date(ev.event_date);
-  const thumb = ev.thumbnail_url ? `${API_BASE}${ev.thumbnail_url}` : null;
+  const isToday = ev.event_date === new Date().toISOString().slice(0,10);
   return (
-    <div style={{background:C.surface,border:`1.5px solid ${hov?C.accent:C.border}`,borderRadius:16,
-        padding:"18px 22px",display:"flex",gap:16,alignItems:"flex-start",transition:"all .2s",
-        transform:hov?"translateY(-2px)":"none",boxShadow:hov?"0 6px 24px rgba(0,0,0,.08)":"none"}}
+    <div onClick={() => onClick(ev)}
+      style={{background:C.surface,
+          border:`1.5px solid ${isToday?"#16a34a":hov?C.accent:C.border}`,
+          borderRadius:16,padding:"18px 20px",display:"flex",alignItems:"flex-start",
+          gap:16,cursor:"pointer",transition:"all .2s",
+          transform:hov?"translateY(-2px)":"none",
+          boxShadow:hov?"0 6px 24px rgba(0,0,0,.08)":"none"}}
       onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)}>
-      <div style={{flexShrink:0,borderRadius:12,padding:"10px 12px",textAlign:"center",
-          minWidth:52,background:C.ink,color:"#fff"}}>
-        <span style={{fontFamily:"'Playfair Display',serif",fontSize:"1.5rem",fontWeight:900,
-            lineHeight:1,display:"block"}}>{d.getDate()}</span>
-        <span style={{fontSize:".6rem",textTransform:"uppercase",letterSpacing:"1px",
-            opacity:.8,display:"block"}}>{MON_S[d.getMonth()]}</span>
-      </div>
-      {thumb && <img src={thumb} alt="" style={{width:48,height:48,borderRadius:10,objectFit:"cover",flexShrink:0}}/>}
-      <div>
-        <strong style={{fontFamily:"'Playfair Display',serif",fontSize:".92rem",display:"block",
-            marginBottom:3,lineHeight:1.3}}>{ev.title}</strong>
-        <span style={{fontSize:".72rem",fontWeight:600,color:C.accent,marginBottom:5,display:"block"}}>
-          {ev.club_name}
+
+      {/* Date badge — green when today */}
+      <div style={{flexShrink:0,background:isToday?"#16a34a":C.ink,
+          color:"#fff",borderRadius:12,width:56,padding:"10px 0",textAlign:"center"}}>
+        <span style={{fontFamily:"'Playfair Display',serif",fontSize:"1.5rem",
+            fontWeight:900,lineHeight:1,display:"block"}}>{d.getDate()}</span>
+        <span style={{fontSize:".58rem",textTransform:"uppercase",
+            letterSpacing:"1px",opacity:.75,display:"block",marginTop:2}}>
+          {MON_S[d.getMonth()]}
         </span>
-        {ev.event_time && <span style={{fontSize:".72rem",color:C.muted,marginBottom:2,display:"block"}}>⏰ {ev.event_time}</span>}
-        {ev.location && <span style={{fontSize:".72rem",color:C.muted,marginBottom:4,display:"block"}}>📍 {ev.location}</span>}
-        <span style={{fontSize:".78rem",color:C.muted,lineHeight:1.5}}>{ev.description}</span>
-        {ev.registration_link&&(
-          <a href={ev.registration_link} target="_blank" rel="noreferrer"
-            style={{display:"inline-block",marginTop:8,fontSize:".74rem",color:C.accent,fontWeight:600,textDecoration:"none"}}>
-            Register →
-          </a>
+      </div>
+
+      {/* Content */}
+      <div style={{flex:1,minWidth:0}}>
+        {isToday && (
+          <div style={{display:"inline-flex",alignItems:"center",gap:5,
+              background:"#f0fdf4",color:"#16a34a",border:"1px solid #bbf7d0",
+              borderRadius:20,padding:"2px 10px",fontSize:".68rem",fontWeight:700,
+              marginBottom:6,letterSpacing:".3px"}}>
+            <span style={{width:6,height:6,borderRadius:"50%",background:"#16a34a",
+                display:"inline-block",animation:"pulse 1.5s infinite"}}/>
+            Happening Today
+          </div>
+        )}
+        <div style={{fontWeight:700,fontSize:".95rem",lineHeight:1.3,marginBottom:3}}>
+          {ev.title}
+        </div>
+        <div style={{fontSize:".76rem",fontWeight:600,color:C.accent,marginBottom:5}}>
+          {ev.club_name}
+        </div>
+        {ev.event_time && (
+          <div style={{fontSize:".74rem",color:C.muted,marginBottom:2}}>
+            ⏰ {ev.event_time}
+          </div>
+        )}
+        {ev.description && (
+          <div style={{fontSize:".78rem",color:C.muted,marginTop:4,lineHeight:1.5,
+              overflow:"hidden",textOverflow:"ellipsis",
+              display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical"}}>
+            {ev.description}
+          </div>
         )}
       </div>
     </div>
@@ -423,7 +448,7 @@ function EventCard({ ev }) {
 }
 
 /* ── Home Page ──────────────────────────────────────────────────────────── */
-function HomePage({ onClubClick, onProfile }) {
+function HomePage({ onClubClick, onProfile, onEventClick }) {
   const { user, logout } = useAuth();
   const [clubs,   setClubs]   = useState([]);
   const [events,  setEvents]  = useState([]);
@@ -481,7 +506,8 @@ function HomePage({ onClubClick, onProfile }) {
   const featured    = deptClubs.slice(0,3);
   const allScored   = deptClubs.map(c=>({...c, sc:scoreClub(c,applied)}));
   const allFiltered = applied ? allScored.filter(c=>c.sc>0).sort((a,b)=>b.sc-a.sc) : allScored;
-  const upcoming    = events.filter(e=>!e.is_past);
+  const todayStr    = new Date().toISOString().slice(0,10);
+  const upcoming    = events.filter(e => e.event_date >= todayStr);
 
   const handleSeeAll = () => {
     const n=!showAll; setShowAll(n);
@@ -795,8 +821,8 @@ function HomePage({ onClubClick, onProfile }) {
         {upcoming.length===0 ? (
           <div style={{textAlign:"center",padding:"40px 0",color:C.muted}}>No upcoming events yet.</div>
         ) : (
-          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:14}}>
-            {upcoming.map(ev=><EventCard key={ev.id} ev={ev}/>)}
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(300px,1fr))",gap:14}}>
+            {upcoming.map(ev=><EventCard key={ev.id} ev={ev} onClick={onEventClick}/>)}
           </div>
         )}
       </section>
@@ -809,22 +835,28 @@ function HomePage({ onClubClick, onProfile }) {
 /* ── Root app with simple event-based routing ───────────────────────────── */
 function AppInner() {
   const { user, loading } = useAuth();
-  const [page,     setPage]     = useState("home");
-  const [clubId,   setClubId]   = useState(null);
-  const [verifyMsg,setVerifyMsg] = useState("");
+  const [page,      setPage]      = useState("home");
+  const [clubId,    setClubId]    = useState(null);
+  const [eventId,   setEventId]   = useState(null);
+  const [eventType, setEventType] = useState("club");
+  const [verifyMsg, setVerifyMsg] = useState("");
 
   useEffect(() => {
     const fn = e => setPage(e.detail);
     window.addEventListener("cv:nav", fn);
-
     return () => window.removeEventListener("cv:nav", fn);
   }, []);
 
-
-
-  const goHome = () => { setPage("home"); setClubId(null); };
+  const goHome    = () => { setPage("home"); setClubId(null); setEventId(null); };
   const goProfile = () => setPage("profile");
-  const goClub = id  => { setClubId(id); setPage("club"); };
+  const goClub    = id => { setClubId(id); setPage("club"); };
+  const goEvent   = ev => {
+    // ev can be an event object (from EventCard) or just {id, eventType}
+    const type = ev.club_id ? "club" : "general";
+    setEventId(ev.id);
+    setEventType(type);
+    setPage("event");
+  };
 
   if (loading) return (
     <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",
@@ -847,9 +879,18 @@ function AppInner() {
 
   if (page==="profile" && user?.role!=="admin") return <ProfilePage onClubClick={goClub} onBack={goHome}/>;
 
-  if (page==="club" && clubId) return <ClubPage clubId={clubId} onBack={goHome}/>;
+  if (page==="club" && clubId) return <ClubPage clubId={clubId} onBack={goHome} onEventClick={goEvent}/>;
 
-  return <HomePage onClubClick={goClub} onProfile={goProfile}/>;
+  if (page==="event" && eventId) return (
+    <EventPage
+      eventId={eventId}
+      eventType={eventType}
+      onBack={() => setPage(clubId ? "club" : "home")}
+      onClubClick={goClub}
+    />
+  );
+
+  return <HomePage onClubClick={goClub} onProfile={goProfile} onEventClick={goEvent}/>;
 }
 
 export default function App() {

@@ -10,7 +10,7 @@ const C = {
   green:"#16a34a", greenBg:"#f0fdf4",
 };
 
-export default function ClubPage({ clubId, onBack }) {
+export default function ClubPage({ clubId, onBack, onEventClick }) {
   const { user } = useAuth();
   const [club,       setClub]       = useState(null);
   const [loading,    setLoading]    = useState(true);
@@ -178,7 +178,7 @@ export default function ClubPage({ clubId, onBack }) {
               Upcoming Events
             </h2>
             <div style={{display:"flex",gap:16,overflowX:"auto",paddingBottom:8}}>
-              {upcoming.map(ev=><EventTile key={ev.id} ev={ev} isPast={false}/>)}
+              {upcoming.map(ev=><EventTile key={ev.id} ev={ev} isPast={false} onEventClick={onEventClick}/>)}
             </div>
           </section>
         )}
@@ -242,10 +242,118 @@ export default function ClubPage({ clubId, onBack }) {
             </div>
           </section>
         )}
-
+        {/*
         {(club.events||[]).length===0 && (
           <div style={{textAlign:"center",padding:"60px 0",color:C.muted,marginTop:48}}>
             No events added yet.
+          </div>
+        )}*/}
+      </div>
+    </div>
+  );
+}
+
+function EventPhotoModal({ ev, onClose }) {
+  const photos = ev.photos?.length ? ev.photos
+    : ev.picture_url ? [ev.picture_url] : [];
+  const thumb = ev.thumbnail_url ? `${API}${ev.thumbnail_url}` : null;
+  const [active, setActive] = useState(0);
+  const allImgs = photos.length ? photos.map(p=>`${API}${p}`) : (thumb ? [thumb] : []);
+  const total = allImgs.length;
+
+  const prev = e => { e.stopPropagation(); setActive(i => (i - 1 + total) % total); };
+  const next = e => { e.stopPropagation(); setActive(i => (i + 1) % total); };
+
+  return (
+    <div onClick={onClose}
+      style={{position:"fixed",inset:0,background:"rgba(0,0,0,.78)",zIndex:500,
+        display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
+      <div onClick={e=>e.stopPropagation()}
+        style={{background:C.surface,borderRadius:20,width:"min(700px,96vw)",
+          maxHeight:"90vh",display:"flex",flexDirection:"column",
+          boxShadow:"0 24px 64px rgba(0,0,0,.35)",overflow:"hidden"}}>
+
+        {/* Header */}
+        <div style={{padding:"18px 22px 14px",borderBottom:`1px solid ${C.border}`,
+            display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:12}}>
+          <div>
+            <div style={{fontFamily:"'Playfair Display',serif",fontSize:"1.1rem",
+                fontWeight:700,marginBottom:3}}>{ev.title}</div>
+            <div style={{fontSize:".76rem",color:C.muted}}>
+              📅 {new Date(ev.event_date).toLocaleDateString("en-GB",
+                {day:"numeric",month:"long",year:"numeric"})}
+              {ev.location && ` · 📍 ${ev.location}`}
+            </div>
+          </div>
+          <button onClick={onClose}
+            style={{background:C.surface2,border:`1px solid ${C.border}`,
+              width:32,height:32,borderRadius:8,cursor:"pointer",
+              color:C.muted,fontSize:"1rem",flexShrink:0}}>✕</button>
+        </div>
+
+        {/* Main photo with arrow navigation */}
+        <div style={{flex:1,overflow:"hidden",background:"#111",position:"relative",
+            display:"flex",alignItems:"center",justifyContent:"center",minHeight:240}}>
+          {allImgs.length > 0 ? (
+            <img src={allImgs[active]} alt=""
+              style={{maxWidth:"100%",maxHeight:"55vh",objectFit:"contain",display:"block"}}/>
+          ) : (
+            <div style={{color:"#888",fontSize:"1rem",padding:48,textAlign:"center"}}>
+              <div style={{fontSize:"2rem",marginBottom:8}}>📷</div>
+              No photos uploaded yet.
+            </div>
+          )}
+
+          {/* Left arrow */}
+          {total > 1 && (
+            <button onClick={prev}
+              style={{position:"absolute",left:12,top:"50%",transform:"translateY(-50%)",
+                width:40,height:40,borderRadius:"50%",
+                background:"rgba(0,0,0,.55)",border:"none",color:"#fff",
+                fontSize:"1.2rem",cursor:"pointer",display:"flex",
+                alignItems:"center",justifyContent:"center",
+                transition:"background .15s"}}
+              onMouseEnter={e=>e.currentTarget.style.background="rgba(0,0,0,.85)"}
+              onMouseLeave={e=>e.currentTarget.style.background="rgba(0,0,0,.55)"}>
+              ‹
+            </button>
+          )}
+
+          {/* Right arrow */}
+          {total > 1 && (
+            <button onClick={next}
+              style={{position:"absolute",right:12,top:"50%",transform:"translateY(-50%)",
+                width:40,height:40,borderRadius:"50%",
+                background:"rgba(0,0,0,.55)",border:"none",color:"#fff",
+                fontSize:"1.2rem",cursor:"pointer",display:"flex",
+                alignItems:"center",justifyContent:"center",
+                transition:"background .15s"}}
+              onMouseEnter={e=>e.currentTarget.style.background="rgba(0,0,0,.85)"}
+              onMouseLeave={e=>e.currentTarget.style.background="rgba(0,0,0,.55)"}>
+              ›
+            </button>
+          )}
+
+          {/* Dots — only as many as there are images */}
+          {total > 1 && (
+            <div style={{position:"absolute",bottom:10,left:"50%",
+                transform:"translateX(-50%)",display:"flex",gap:6}}>
+              {allImgs.map((_,i)=>(
+                <div key={i} onClick={e=>{e.stopPropagation();setActive(i);}}
+                  style={{width: i===active ? 20 : 7,height:7,borderRadius:4,
+                    background: i===active ? "#fff" : "rgba(255,255,255,.45)",
+                    cursor:"pointer",transition:"all .2s"}}/>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Description */}
+        {ev.description && (
+          <div style={{padding:"12px 22px 18px",borderTop:`1px solid ${C.border}`}}>
+            <p style={{fontSize:".82rem",color:C.muted,lineHeight:1.7,margin:0}}>
+              {ev.description}
+            </p>
           </div>
         )}
       </div>
@@ -253,63 +361,105 @@ export default function ClubPage({ clubId, onBack }) {
   );
 }
 
-function EventTile({ ev, isPast }) {
+function EventTile({ ev, isPast, onEventClick }) {
   const [hov,setHov]=useState(false);
+  const [showModal,setShowModal]=useState(false);
   const d     = new Date(ev.event_date);
   const thumb = ev.thumbnail_url ? `${API}${ev.thumbnail_url}` : null;
-  const pic   = ev.picture_url   ? `${API}${ev.picture_url}`   : null;
+  const hasPhotos = (ev.photos?.length > 0) || !!ev.picture_url;
+  const isClickable = isPast || !!onEventClick;
+
+  const handleClick = () => {
+    if (isPast) setShowModal(true);
+    else if (onEventClick) onEventClick(ev);
+  };
 
   return (
-    <div style={{flexShrink:0,width:280,background:"#fff",
-        border:`1.5px solid ${hov?C.accent:C.border}`,borderRadius:16,overflow:"hidden",
-        transition:"all .22s",transform:hov?"translateY(-3px)":"none",
-        boxShadow:hov?"0 8px 32px rgba(0,0,0,.1)":"none",opacity:isPast?.85:1}}
-      onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)}>
-      {(pic||thumb) ? (
-        <img src={pic||thumb} alt={ev.title} style={{width:"100%",height:148,objectFit:"cover",display:"block"}}/>
-      ) : (
-        <div style={{width:"100%",height:80,background:C.surface2,display:"flex",
-            alignItems:"center",justifyContent:"center",fontSize:"2rem"}}>📅</div>
+    <>
+      {showModal && isPast && (
+        <EventPhotoModal ev={ev} onClose={()=>setShowModal(false)}/>
       )}
-      <div style={{padding:18}}>
-        {isPast && (
-          <span style={{background:C.surface2,color:C.muted,fontSize:".64rem",fontWeight:600,
-              textTransform:"uppercase",letterSpacing:"1px",padding:"2px 8px",
-              borderRadius:8,marginBottom:8,display:"inline-block"}}>Completed</span>
-        )}
-        <div style={{fontFamily:"'Playfair Display',serif",fontSize:".96rem",fontWeight:700,
-            marginBottom:6,lineHeight:1.3}}>{ev.title}</div>
-        <div style={{fontSize:".73rem",color:C.muted,marginBottom:8}}>
-          📅 {d.getDate()} {MON_S[d.getMonth()]} {d.getFullYear()}
-          {ev.event_time && ` · ⏰ ${ev.event_time}`}
-          {ev.location && <span style={{display:"block",marginTop:2}}>📍 {ev.location}</span>}
-        </div>
-        <p style={{fontSize:".78rem",color:C.muted,lineHeight:1.6,marginBottom:10}}>
-          {(ev.description||"").slice(0,110)}{(ev.description||"").length>110?"…":""}
-        </p>
-        {!isPast && ev.registration_link && (
-          <a href={ev.registration_link} target="_blank" rel="noreferrer"
-            style={{display:"inline-block",background:C.accent,color:"#fff",
-              padding:"6px 14px",borderRadius:8,fontSize:".75rem",fontWeight:600,textDecoration:"none"}}>
-            Register →
-          </a>
-        )}
-        {(ev.coordinators||[]).length>0 && (
-          <div style={{marginTop:12,paddingTop:10,borderTop:`1px solid ${C.border}`}}>
-            <p style={{fontSize:".65rem",color:"#aaa",fontWeight:600,textTransform:"uppercase",
-                letterSpacing:"1px",marginBottom:6}}>Coordinators</p>
-            {ev.coordinators.map(co=>(
-              <div key={co.id} style={{fontSize:".74rem",color:C.muted,marginBottom:4}}>
-                <span style={{fontWeight:600}}>{co.name}</span>
-                {co.position&&<span style={{color:C.accent}}> · {co.position}</span>}
-                {co.phone&&<span> · {co.phone}</span>}
-                {co.email&&<a href={`mailto:${co.email}`} style={{color:C.accent,textDecoration:"none"}}> · {co.email}</a>}
+      <div style={{flexShrink:0,width:280,background:"#fff",
+          border:`1.5px solid ${hov?C.accent:C.border}`,borderRadius:16,overflow:"hidden",
+          transition:"all .22s",transform:hov?"translateY(-3px)":"none",
+          boxShadow:hov?"0 8px 32px rgba(0,0,0,.1)":"none",opacity:isPast?.85:1,
+          cursor:isClickable?"pointer":"default"}}
+        onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)}
+        onClick={handleClick}>
+        {thumb ? (
+          <div style={{position:"relative"}}>
+            <img src={thumb} alt={ev.title}
+              style={{width:"100%",height:148,objectFit:"cover",display:"block"}}/>
+            {isPast && hasPhotos && (
+              <div style={{position:"absolute",bottom:8,right:8,
+                  background:"rgba(0,0,0,.55)",color:"#fff",borderRadius:6,
+                  padding:"3px 9px",fontSize:".68rem",fontWeight:600}}>
+                📷 View Photos
               </div>
-            ))}
+            )}
+            {!isPast && (
+              <div style={{position:"absolute",bottom:8,right:8,
+                  background:"rgba(30,58,138,.85)",color:"#fff",borderRadius:6,
+                  padding:"3px 9px",fontSize:".68rem",fontWeight:600}}>
+                View details →
+              </div>
+            )}
           </div>
+        ) : (
+          <div style={{width:"100%",height:80,background:C.surface2,display:"flex",
+              alignItems:"center",justifyContent:"center",fontSize:"2rem"}}>📅</div>
         )}
+        <div style={{padding:18}}>
+          {isPast && (
+            <span style={{background:C.surface2,color:C.muted,fontSize:".64rem",fontWeight:600,
+                textTransform:"uppercase",letterSpacing:"1px",padding:"2px 8px",
+                borderRadius:8,marginBottom:8,display:"inline-block"}}>Completed</span>
+          )}
+          <div style={{fontFamily:"'Playfair Display',serif",fontSize:".96rem",fontWeight:700,
+              marginBottom:6,lineHeight:1.3}}>{ev.title}</div>
+          <div style={{fontSize:".73rem",color:C.muted,marginBottom:8}}>
+            📅 {d.getDate()} {MON_S[d.getMonth()]} {d.getFullYear()}
+            {ev.event_time && ` · ⏰ ${ev.event_time}`}
+            {ev.location && <span style={{display:"block",marginTop:2}}>📍 {ev.location}</span>}
+          </div>
+          <p style={{fontSize:".78rem",color:C.muted,lineHeight:1.6,marginBottom:10}}>
+            {(ev.description||"").slice(0,110)}{(ev.description||"").length>110?"…":""}
+          </p>
+          {!isPast && ev.registration_link && (
+            <a href={ev.registration_link} target="_blank" rel="noreferrer"
+              onClick={e=>e.stopPropagation()}
+              style={{display:"inline-block",background:C.accent,color:"#fff",
+                padding:"6px 14px",borderRadius:8,fontSize:".75rem",fontWeight:600,textDecoration:"none"}}>
+              Register →
+            </a>
+          )}
+          {isPast && (
+            <div style={{fontSize:".74rem",color:C.accent,fontWeight:600,marginTop:4}}>
+              {hasPhotos ? " " : "No photos yet"}
+            </div>
+          )}{/*
+          {!isPast && onEventClick && (
+            <div style={{fontSize:".74rem",color:C.accent,fontWeight:600,marginTop:4}}>
+              Click to view full details →
+            </div>
+          )}*/}
+          {(ev.coordinators||[]).length>0 && (
+            <div style={{marginTop:12,paddingTop:10,borderTop:`1px solid ${C.border}`}}>
+              <p style={{fontSize:".65rem",color:"#aaa",fontWeight:600,textTransform:"uppercase",
+                  letterSpacing:"1px",marginBottom:6}}>Coordinators</p>
+              {ev.coordinators.map(co=>(
+                <div key={co.id} style={{fontSize:".74rem",color:C.muted,marginBottom:4}}>
+                  <span style={{fontWeight:600}}>{co.name}</span>
+                  {co.position&&<span style={{color:C.accent}}> · {co.position}</span>}
+                  {co.phone&&<span> · {co.phone}</span>}
+                  {co.email&&<a href={`mailto:${co.email}`} style={{color:C.accent,textDecoration:"none"}}> · {co.email}</a>}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
-    </div>
+    </>
   );
 }
 

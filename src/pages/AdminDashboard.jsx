@@ -83,11 +83,15 @@ function EventForm({ clubId=null, event, onSaved, onCancel }) {
     location:event?.location||"",
     registration_link:event?.registration_link||"",
     existing_thumbnail_url:event?.thumbnail_url||"",
-    existing_picture_url:event?.picture_url||"",
   });
   const [coords,setCoords] = useState(event?.coordinators||[]);
   const [thumb,setThumb] = useState(null);
-  const [pic,setPic] = useState(null);
+  // Multi-photo state for past events
+  const [newPhotos,setNewPhotos] = useState([]);          // File[] staged to upload
+  const [existingPhotos] = useState(                      // already-saved URLs
+    event?.photos?.length ? event.photos :
+    event?.picture_url   ? [event.picture_url] : []
+  );
   const [saving,setSaving] = useState(false);
   const [error,setError] = useState("");
   const isPast = form.event_date && form.event_date < today;
@@ -99,7 +103,8 @@ function EventForm({ clubId=null, event, onSaved, onCancel }) {
       Object.entries(form).forEach(([k,v])=>{ if(v) fd.append(k,v); });
       if (!isGeneral) fd.append("coordinators",JSON.stringify(coords));
       if (thumb) fd.append("thumbnail",thumb);
-      if (pic) fd.append("picture",pic);
+      // Append each new gallery photo
+      newPhotos.forEach(f => fd.append("photos",f));
       const token = localStorage.getItem("cv_token");
       let url;
       if (isGeneral) url = isEdit?`${API}/api/general-events/${event.id}`:`${API}/api/general-events`;
@@ -146,24 +151,68 @@ function EventForm({ clubId=null, event, onSaved, onCancel }) {
           <input type="url" style={inp()} placeholder="https://forms.google.com/…"
             value={form.registration_link} onChange={e=>setForm({...form,registration_link:e.target.value})}/>
         </div>
+
+        {/* ── Thumbnail — always available ── */}
         <div style={{gridColumn:"1/-1"}}>
           <label style={lbl()}>Thumbnail / Icon</label>
           {form.existing_thumbnail_url&&!thumb&&(
-            <img src={`${API}${form.existing_thumbnail_url}`} alt="" style={{width:64,height:64,objectFit:"cover",borderRadius:10,marginBottom:8,display:"block"}}/>
+            <img src={`${API}${form.existing_thumbnail_url}`} alt=""
+              style={{width:64,height:64,objectFit:"cover",borderRadius:10,marginBottom:8,display:"block"}}/>
           )}
           <input type="file" accept="image/*" style={inp()} onChange={e=>setThumb(e.target.files[0]||null)}/>
+          <p style={{fontSize:".74rem",color:C.muted,marginTop:-8,marginBottom:12}}>
+            This image will be used as the event card thumbnail.
+          </p>
         </div>
-        {isPast?(
+
+        {/* ── Event Gallery Photos — only for past events ── */}
+        {isPast ? (
           <div style={{gridColumn:"1/-1"}}>
-            <label style={lbl()}>Event Photo <span style={{color:C.accent,textTransform:"none"}}>(past event)</span></label>
-            {form.existing_picture_url&&!pic&&(
-              <img src={`${API}${form.existing_picture_url}`} alt="" style={{width:"100%",maxWidth:300,height:160,objectFit:"cover",borderRadius:12,marginBottom:8,display:"block"}}/>
+            <label style={lbl()}>
+              Event Gallery Photos
+              <span style={{color:C.accent,textTransform:"none",marginLeft:6,fontWeight:400}}>
+                (past event — shown when users click the card)
+              </span>
+            </label>
+            {/* Show existing saved photos */}
+            {existingPhotos.length > 0 && (
+              <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10}}>
+                {existingPhotos.map((url,i)=>(
+                  <img key={i} src={`${API}${url}`} alt=""
+                    style={{width:80,height:64,objectFit:"cover",borderRadius:8,border:`1.5px solid ${C.border}`}}/>
+                ))}
+              </div>
             )}
-            <input type="file" accept="image/*" style={inp()} onChange={e=>setPic(e.target.files[0]||null)}/>
+            {/* Preview newly staged photos */}
+            {newPhotos.length > 0 && (
+              <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:8}}>
+                {newPhotos.map((f,i)=>(
+                  <div key={i} style={{position:"relative"}}>
+                    <img src={URL.createObjectURL(f)} alt=""
+                      style={{width:80,height:64,objectFit:"cover",borderRadius:8,
+                        border:`1.5px solid ${C.accent}`}}/>
+                    <button type="button"
+                      onClick={()=>setNewPhotos(newPhotos.filter((_,j)=>j!==i))}
+                      style={{position:"absolute",top:-6,right:-6,width:18,height:18,
+                        borderRadius:"50%",background:C.ink,color:"#fff",
+                        border:"none",cursor:"pointer",fontSize:".6rem",
+                        display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <input type="file" accept="image/*" multiple style={inp()}
+              onChange={e=>setNewPhotos(prev=>[...prev,...Array.from(e.target.files)])}/>
+            <p style={{fontSize:".74rem",color:C.muted,marginTop:-8,marginBottom:12}}>
+              You can select multiple photos at once, or add more in batches.
+            </p>
           </div>
-        ):(
-          <div style={{gridColumn:"1/-1",background:C.surface2,borderRadius:10,padding:"10px 14px",marginBottom:12}}>
-            <p style={{fontSize:".78rem",color:C.muted}}>📷 Photo upload available after event date passes.</p>
+        ) : (
+          <div style={{gridColumn:"1/-1",background:C.surface2,borderRadius:10,
+              padding:"10px 14px",marginBottom:12}}>
+            <p style={{fontSize:".78rem",color:C.muted}}>
+              📷 Gallery photo upload will be available once the event date has passed.
+            </p>
           </div>
         )}
       </div>

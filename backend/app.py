@@ -121,6 +121,13 @@ def init_db():
             FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
             FOREIGN KEY(club_id) REFERENCES clubs(id) ON DELETE CASCADE
         );
+        CREATE TABLE IF NOT EXISTS event_photos(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id INTEGER NOT NULL,
+            event_type TEXT NOT NULL DEFAULT 'club',
+            photo_url TEXT NOT NULL,
+            created TEXT DEFAULT(datetime('now'))
+        );
         CREATE TABLE IF NOT EXISTS notifications(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
@@ -194,6 +201,15 @@ def init_db():
         if "email" not in club_cols:
             c.execute("ALTER TABLE clubs ADD COLUMN email TEXT DEFAULT ''")
             c.commit()
+        # Migrate: add event_photos table if missing
+        c.execute("""CREATE TABLE IF NOT EXISTS event_photos(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id INTEGER NOT NULL,
+            event_type TEXT NOT NULL DEFAULT 'club',
+            photo_url TEXT NOT NULL,
+            created TEXT DEFAULT(datetime('now'))
+        )""")
+        c.commit()
         existing_admin = c.execute("SELECT id FROM users WHERE email=?",("admin@clubverse.edu",)).fetchone()
         h = bcrypt.hashpw(b"admin123", bcrypt.gensalt()).decode()
         if not existing_admin:
@@ -208,18 +224,15 @@ def init_db():
 def mark_past():
     now = datetime.utcnow()
     today = now.strftime("%Y-%m-%d")
-    now_time = now.strftime("%H:%M")
     with conn() as c:
+        # Only mark as past when event_date is strictly before today
+        # Events on today's date are NOT marked past — they stay visible all day
         c.execute(
-            "UPDATE events SET is_past=1 WHERE is_past=0 AND ("
-            "event_date<? OR (event_date=? AND event_time IS NOT NULL AND event_time<=?)"
-            " OR (event_date=? AND event_time IS NULL))",
-            (today, today, now_time, today))
+            "UPDATE events SET is_past=1 WHERE is_past=0 AND event_date<?",
+            (today,))
         c.execute(
-            "UPDATE general_events SET is_past=1 WHERE is_past=0 AND ("
-            "event_date<? OR (event_date=? AND event_time IS NOT NULL AND event_time<=?)"
-            " OR (event_date=? AND event_time IS NULL))",
-            (today, today, now_time, today))
+            "UPDATE general_events SET is_past=1 WHERE is_past=0 AND event_date<?",
+            (today,))
         c.commit()
 
 def make_token(uid, role):
@@ -269,6 +282,20 @@ def save_file(f,sub):
     name = uuid.uuid4().hex+ext
     f.save(os.path.join(UPL,sub,name))
     return f"/api/uploads/{sub}/{name}"
+
+def save_event_photos(eid, event_type="club"):
+    """Append all files in request.files.getlist('photos') to event_photos table."""
+    files = request.files.getlist("photos")
+    if not files:
+        return
+    with conn() as c:
+        for f in files:
+            if f and f.filename:
+                url = save_file(f, "events")
+                c.execute(
+                    "INSERT INTO event_photos(event_id,event_type,photo_url) VALUES(?,?,?)",
+                    (eid, event_type, url))
+        c.commit()
 
 def notify_subscribers(club_id, club_name, event_title, event_date, event_time=None):
     with conn() as c:
@@ -455,6 +482,9 @@ def get_club(cid):
         for ev in evs:
             ev["coordinators"]=rows(c.execute(
                 "SELECT * FROM event_coordinators WHERE event_id=?",(ev["id"],)).fetchall())
+            ev["photos"]=[r["photo_url"] for r in c.execute(
+                "SELECT photo_url FROM event_photos WHERE event_id=? AND event_type='club' ORDER BY id",
+                (ev["id"],)).fetchall()]
         cl["events"]=evs
         cl["recruitments"]=rows(c.execute(
             "SELECT * FROM recruitments WHERE club_id=? ORDER BY created DESC",(cid,)).fetchall())
@@ -576,6 +606,8 @@ def create_event(cid):
                       (eid,co.get("name",""),co.get("position",""),co.get("email",""),co.get("phone","")))
         cl=c.execute("SELECT name FROM clubs WHERE id=?",(cid,)).fetchone()
         c.commit()
+    if past:
+        save_event_photos(eid, "club")
     if cl and not past:
         notify_subscribers(cid, cl["name"], title, date, time_)
     return ok({"id":eid,"title":title},201)
@@ -606,6 +638,8 @@ def update_event(eid):
             c.execute("INSERT INTO event_coordinators(event_id,name,position,email,phone) VALUES(?,?,?,?,?)",
                       (eid,co.get("name",""),co.get("position",""),co.get("email",""),co.get("phone","")))
         c.commit()
+    if past:
+        save_event_photos(eid, "club")
     return ok({"id":eid})
 
 @app.route("/api/events/<int:eid>",methods=["DELETE"])
@@ -626,6 +660,10 @@ def list_general_events():
             evs=rows(c.execute("SELECT * FROM general_events WHERE event_date>=? ORDER BY event_date",(today,)).fetchall())
         else:
             evs=rows(c.execute("SELECT * FROM general_events ORDER BY event_date").fetchall())
+        for ev in evs:
+            ev["photos"]=[r["photo_url"] for r in c.execute(
+                "SELECT photo_url FROM event_photos WHERE event_id=? AND event_type='general' ORDER BY id",
+                (ev["id"],)).fetchall()]
     return ok(evs)
 
 @app.route("/api/general-events", methods=["POST"])
@@ -647,6 +685,8 @@ def create_general_event():
                       "location,registration_link,thumbnail_url,picture_url,is_past) VALUES(?,?,?,?,?,?,?,?,?)",
                       (title,desc,date,time_,loc,reg,thumb,pic,past))
         eid=cur.lastrowid; c.commit()
+    if past:
+        save_event_photos(eid, "general")
     # Notify all users about general (college-wide) events
     if not past:
         with conn() as c:
@@ -677,6 +717,8 @@ def update_general_event(eid):
                   "location=?,registration_link=?,thumbnail_url=?,picture_url=?,is_past=? WHERE id=?",
                   (title,desc,date,time_,loc,reg,thumb,pic,past,eid))
         c.commit()
+    if past:
+        save_event_photos(eid, "general")
     return ok({"id":eid})
 
 @app.route("/api/general-events/<int:eid>", methods=["DELETE"])
