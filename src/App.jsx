@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from "react";
 import { AuthProvider, useAuth, apiCall } from "./context/AuthContext";
-import ClubPage       from "./pages/ClubPage";
-import ProfilePage    from "./pages/ProfilePage";
-import AdminDashboard from "./pages/AdminDashboard";
-import EventPage      from "./pages/EventPage";
+import ClubPage           from "./pages/ClubPage";
+import ProfilePage        from "./pages/ProfilePage";
+import AdminDashboard     from "./pages/AdminDashboard";
+import EventPage          from "./pages/EventPage";
+import ModeratorDashboard from "./pages/ModeratorDashboard";
 
 const API_BASE = "http://localhost:8000";
 
@@ -612,11 +613,11 @@ function HomePage({ onClubClick, onProfile, onEventClick }) {
                   👤 {user.name.split(" ")[0]}
                 </button>
               </>)}
-              {user.role==="admin" && (
-                <button onClick={()=>window.dispatchEvent(new CustomEvent("cv:nav",{detail:"admin"}))}
+              {(user.role==="admin" || user.role==="moderator") && (
+                <button onClick={()=>window.dispatchEvent(new CustomEvent("cv:nav",{detail:user.role==="admin"?"admin":"moderator"}))}
                   style={{background:C.accentBg,color:C.accent,border:`1px solid ${C.accent}`,
                     borderRadius:8,padding:"7px 14px",cursor:"pointer",fontSize:".8rem",fontWeight:600}}>
-                  Admin ↗
+                  {user.role==="admin"?"Admin ↗":"My Club ↗"}
                 </button>
               )}
             </div>
@@ -839,20 +840,44 @@ function AppInner() {
   const [clubId,    setClubId]    = useState(null);
   const [eventId,   setEventId]   = useState(null);
   const [eventType, setEventType] = useState("club");
+  const [adminView, setAdminView] = useState("dashboard"); // track admin internal view
   const [verifyMsg, setVerifyMsg] = useState("");
+  // History stack — each entry: {page, clubId, eventId, eventType, adminView}
+  const [navHistory, setNavHistory] = useState([]);
+
+  const pushNav = () => {
+    setNavHistory(h => [...h, { page, clubId, eventId, eventType, adminView }]);
+  };
+
+  const goBack = () => {
+    setNavHistory(h => {
+      if (h.length === 0) {
+        setPage("home"); setClubId(null); setEventId(null);
+        return h;
+      }
+      const prev = h[h.length - 1];
+      setPage(prev.page);
+      setClubId(prev.clubId);
+      setEventId(prev.eventId);
+      setEventType(prev.eventType);
+      setAdminView(prev.adminView || "dashboard");
+      return h.slice(0, -1);
+    });
+  };
 
   useEffect(() => {
-    const fn = e => setPage(e.detail);
+    const fn = e => { pushNav(); setPage(e.detail); };
     window.addEventListener("cv:nav", fn);
     return () => window.removeEventListener("cv:nav", fn);
-  }, []);
+  }, [page, clubId, eventId, eventType, adminView]);
 
-  const goHome    = () => { setPage("home"); setClubId(null); setEventId(null); };
-  const goProfile = () => setPage("profile");
-  const goClub    = id => { setClubId(id); setPage("club"); };
-  const goEvent   = ev => {
+  const goHome    = () => { setPage("home"); setClubId(null); setEventId(null); setNavHistory([]); };
+  const goProfile = () => { pushNav(); setPage("profile"); };
+  const goClub    = id  => { pushNav(); setClubId(id); setPage("club"); };
+  const goEvent   = ev  => {
     // ev can be an event object (from EventCard) or just {id, eventType}
     const type = ev.club_id ? "club" : "general";
+    pushNav();
     setEventId(ev.id);
     setEventType(type);
     setPage("event");
@@ -874,18 +899,39 @@ function AppInner() {
             padding:"10px 24px",cursor:"pointer",fontWeight:600,marginTop:8}}>← Go Home</button>
       </div>
     );
-    return <AdminDashboard onBack={goHome}/>;
+    return (
+      <AdminDashboard
+        initialView={adminView}
+        onViewChange={v => setAdminView(v)}
+        onBack={goBack}
+        onClubClick={id => { pushNav(); setClubId(id); setPage("club"); }}
+        onEventClick={ev => {
+          if (ev._openClub && ev.club_id) { pushNav(); setClubId(ev.club_id); setPage("club"); return; }
+          goEvent(ev);
+        }}
+      />
+    );
   }
 
-  if (page==="profile" && user?.role!=="admin") return <ProfilePage onClubClick={goClub} onBack={goHome}/>;
+  if (page==="moderator") {
+    if (!user || user.role!=="moderator") return null;
+    return (
+      <ModeratorDashboard
+        onBack={goBack}
+        onEventClick={goEvent}
+      />
+    );
+  }
 
-  if (page==="club" && clubId) return <ClubPage clubId={clubId} onBack={goHome} onEventClick={goEvent}/>;
+  if (page==="profile" && user?.role!=="admin") return <ProfilePage onClubClick={goClub} onBack={goBack}/>;
+
+  if (page==="club" && clubId) return <ClubPage clubId={clubId} onBack={goBack} onEventClick={goEvent}/>;
 
   if (page==="event" && eventId) return (
     <EventPage
       eventId={eventId}
       eventType={eventType}
-      onBack={() => setPage(clubId ? "club" : "home")}
+      onBack={goBack}
       onClubClick={goClub}
     />
   );

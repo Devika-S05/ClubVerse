@@ -116,6 +116,37 @@ def init_db():
             created TEXT DEFAULT(datetime('now')),
             FOREIGN KEY(club_id) REFERENCES clubs(id) ON DELETE CASCADE
         );
+        CREATE TABLE IF NOT EXISTS club_members(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            club_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            role TEXT,
+            email TEXT,
+            phone TEXT,
+            created TEXT DEFAULT(datetime('now')),
+            FOREIGN KEY(club_id) REFERENCES clubs(id) ON DELETE CASCADE
+        );
+        CREATE TABLE IF NOT EXISTS club_requests(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            moderator_id INTEGER NOT NULL UNIQUE,
+            name TEXT NOT NULL,
+            description TEXT,
+            department TEXT DEFAULT 'General',
+            tags TEXT DEFAULT '[]',
+            email TEXT DEFAULT '',
+            icon_url TEXT,
+            status TEXT DEFAULT 'pending',
+            created TEXT DEFAULT(datetime('now')),
+            FOREIGN KEY(moderator_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+        CREATE TABLE IF NOT EXISTS moderator_clubs(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL UNIQUE,
+            club_id INTEGER NOT NULL,
+            created TEXT DEFAULT(datetime('now')),
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY(club_id) REFERENCES clubs(id) ON DELETE CASCADE
+        );
         CREATE TABLE IF NOT EXISTS subscriptions(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
@@ -212,6 +243,43 @@ def init_db():
         gen_cols = [r[1] for r in c.execute("PRAGMA table_info(general_events)").fetchall()]
         if "volunteer_link" not in gen_cols:
             c.execute("ALTER TABLE general_events ADD COLUMN volunteer_link TEXT"); c.commit()
+        # Migrate: add club_requests table if missing
+        c.execute("""CREATE TABLE IF NOT EXISTS club_requests(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            moderator_id INTEGER NOT NULL UNIQUE,
+            name TEXT NOT NULL,
+            description TEXT,
+            department TEXT DEFAULT 'General',
+            tags TEXT DEFAULT '[]',
+            email TEXT DEFAULT '',
+            icon_url TEXT,
+            status TEXT DEFAULT 'pending',
+            created TEXT DEFAULT(datetime('now')),
+            FOREIGN KEY(moderator_id) REFERENCES users(id) ON DELETE CASCADE
+        )""")
+        c.commit()
+        # Migrate: add club_members table if missing
+        c.execute("""CREATE TABLE IF NOT EXISTS club_members(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            club_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            role TEXT,
+            email TEXT,
+            phone TEXT,
+            created TEXT DEFAULT(datetime('now')),
+            FOREIGN KEY(club_id) REFERENCES clubs(id) ON DELETE CASCADE
+        )""")
+        c.commit()
+        # Migrate: add moderator_clubs table if missing
+        c.execute("""CREATE TABLE IF NOT EXISTS moderator_clubs(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL UNIQUE,
+            club_id INTEGER NOT NULL,
+            created TEXT DEFAULT(datetime('now')),
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY(club_id) REFERENCES clubs(id) ON DELETE CASCADE
+        )""")
+        c.commit()
         # Migrate: add event_photos table if missing
         c.execute("""CREATE TABLE IF NOT EXISTS event_photos(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -285,6 +353,30 @@ def admin_required(f):
         return f(*a, **kw)
     return wrap
 
+def moderator_or_admin_required(f):
+    """Allows both admin and moderator roles."""
+    @wraps(f)
+    def wrap(*a, **kw):
+        t = request.headers.get("Authorization", "").replace("Bearer ", "").strip()
+        if not t:
+            return jsonify({"success": False, "error": "Token missing"}), 401
+        try:
+            p = decode_token(t)
+        except Exception:
+            return jsonify({"success": False, "error": "Invalid token"}), 401
+        request.uid = int(p["sub"])
+        request.role = p["role"]
+        if request.role not in ("admin", "moderator"):
+            return jsonify({"success": False, "error": "Not authorized"}), 403
+        return f(*a, **kw)
+    return wrap
+
+def get_moderator_club_id(uid):
+    """Return the club_id this moderator manages, or None."""
+    with conn() as c:
+        row_ = c.execute("SELECT club_id FROM moderator_clubs WHERE user_id=?", (uid,)).fetchone()
+    return row_["club_id"] if row_ else None
+
 ok  = lambda d,s=200: (jsonify({"success":True,"data":d}),s)
 err = lambda m,s=400: (jsonify({"success":False,"error":m}),s)
 
@@ -309,11 +401,15 @@ def save_event_photos(eid, event_type="club"):
         c.commit()
 
 @app.route("/api/event-photos/<int:pid>", methods=["DELETE"])
-@admin_required
+@moderator_or_admin_required
 def delete_event_photo(pid):
     with conn() as c:
-        photo = c.execute("SELECT photo_url FROM event_photos WHERE id=?", (pid,)).fetchone()
+        photo = c.execute("SELECT photo_url, event_id, event_type FROM event_photos WHERE id=?", (pid,)).fetchone()
         if not photo: return err("Photo not found", 404)
+        if request.role == "moderator":
+            ev = c.execute("SELECT club_id FROM events WHERE id=?", (photo["event_id"],)).fetchone()
+            if not ev or get_moderator_club_id(request.uid) != ev["club_id"]:
+                return err("Not authorized", 403)
         # Delete the file from disk
         try:
             filepath = os.path.join(BASE, photo["photo_url"].lstrip("/api/uploads/").replace("/", os.sep))
@@ -497,12 +593,30 @@ def list_clubs():
     mark_past()
     with conn() as c:
         cl=rows(c.execute("SELECT * FROM clubs ORDER BY name").fetchall())
-    for x in cl: x["tags"]=json.loads(x.get("tags") or "[]")
+        for x in cl:
+            x["tags"]=json.loads(x.get("tags") or "[]")
+            # Attach moderator info
+            mc = c.execute("SELECT user_id FROM moderator_clubs WHERE club_id=?", (x["id"],)).fetchone()
+            if mc:
+                u = c.execute("SELECT id,name,email FROM users WHERE id=?", (mc["user_id"],)).fetchone()
+                x["moderator"] = dict(u) if u else None
+            else:
+                x["moderator"] = None
     return ok(cl)
 
 @app.route("/api/clubs/<int:cid>")
 def get_club(cid):
     mark_past()
+    # Check caller role (optional auth)
+    caller_role = "student"
+    t = request.headers.get("Authorization","").replace("Bearer ","").strip()
+    if t:
+        try:
+            p = decode_token(t)
+            caller_role = p.get("role","student")
+            caller_uid  = int(p["sub"])
+        except Exception:
+            pass
     with conn() as c:
         cl=row(c.execute("SELECT * FROM clubs WHERE id=?",(cid,)).fetchone())
         if not cl: return err("Not found",404)
@@ -519,6 +633,20 @@ def get_club(cid):
         cl["events"]=evs
         cl["recruitments"]=rows(c.execute(
             "SELECT * FROM recruitments WHERE club_id=? ORDER BY created DESC",(cid,)).fetchall())
+        # Club members only visible to admin and the moderator of this club
+        if caller_role == "admin":
+            cl["members"] = rows(c.execute(
+                "SELECT * FROM club_members WHERE club_id=? ORDER BY created",(cid,)).fetchall())
+        elif caller_role == "moderator":
+            mod_club = c.execute("SELECT club_id FROM moderator_clubs WHERE user_id=?",
+                                 (caller_uid,)).fetchone()
+            if mod_club and mod_club["club_id"] == cid:
+                cl["members"] = rows(c.execute(
+                    "SELECT * FROM club_members WHERE club_id=? ORDER BY created",(cid,)).fetchall())
+            else:
+                cl["members"] = []
+        else:
+            cl["members"] = []
     return ok(cl)
 
 @app.route("/api/clubs",methods=["POST"])
@@ -564,8 +692,10 @@ def delete_club(cid):
 
 # EXECOM
 @app.route("/api/clubs/<int:cid>/execom",methods=["POST"])
-@admin_required
+@moderator_or_admin_required
 def add_execom(cid):
+    if request.role == "moderator" and get_moderator_club_id(request.uid) != cid:
+        return err("Not authorized for this club", 403)
     b=request.get_json() or {}
     name=(b.get("name") or "").strip()
     if not name: return err("name required")
@@ -578,8 +708,13 @@ def add_execom(cid):
     return ok({"id":mid},201)
 
 @app.route("/api/execom/<int:mid>",methods=["PUT"])
-@admin_required
+@moderator_or_admin_required
 def update_execom(mid):
+    if request.role == "moderator":
+        with conn() as c:
+            m = c.execute("SELECT club_id FROM execom_members WHERE id=?", (mid,)).fetchone()
+        if not m or get_moderator_club_id(request.uid) != m["club_id"]:
+            return err("Not authorized", 403)
     b=request.get_json() or {}
     with conn() as c:
         c.execute("UPDATE execom_members SET name=?,position=?,email=?,phone=?,linkedin=?,sort_order=? WHERE id=?",
@@ -589,8 +724,13 @@ def update_execom(mid):
     return ok({"id":mid})
 
 @app.route("/api/execom/<int:mid>",methods=["DELETE"])
-@admin_required
+@moderator_or_admin_required
 def delete_execom(mid):
+    if request.role == "moderator":
+        with conn() as c:
+            m = c.execute("SELECT club_id FROM execom_members WHERE id=?", (mid,)).fetchone()
+        if not m or get_moderator_club_id(request.uid) != m["club_id"]:
+            return err("Not authorized", 403)
     with conn() as c:
         c.execute("DELETE FROM execom_members WHERE id=?",(mid,)); c.commit()
     return ok({"deleted":mid})
@@ -612,8 +752,12 @@ def list_events():
     return ok(evs)
 
 @app.route("/api/clubs/<int:cid>/events",methods=["POST"])
-@admin_required
+@moderator_or_admin_required
 def create_event(cid):
+    # Moderators can only manage their assigned club
+    if request.role == "moderator":
+        if get_moderator_club_id(request.uid) != cid:
+            return err("Not authorized for this club", 403)
     title=(request.form.get("title") or "").strip()
     date=(request.form.get("event_date") or "").strip()
     if not title or not date: return err("title and event_date required")
@@ -645,8 +789,13 @@ def create_event(cid):
     return ok({"id":eid,"title":title},201)
 
 @app.route("/api/events/<int:eid>",methods=["PUT"])
-@admin_required
+@moderator_or_admin_required
 def update_event(eid):
+    if request.role == "moderator":
+        with conn() as c:
+            ev = c.execute("SELECT club_id FROM events WHERE id=?", (eid,)).fetchone()
+        if not ev or get_moderator_club_id(request.uid) != ev["club_id"]:
+            return err("Not authorized for this event", 403)
     title=(request.form.get("title") or "").strip()
     date=(request.form.get("event_date") or "").strip()
     desc=request.form.get("description","")
@@ -676,8 +825,13 @@ def update_event(eid):
     return ok({"id":eid})
 
 @app.route("/api/events/<int:eid>",methods=["DELETE"])
-@admin_required
+@moderator_or_admin_required
 def delete_event(eid):
+    if request.role == "moderator":
+        with conn() as c:
+            ev = c.execute("SELECT club_id FROM events WHERE id=?", (eid,)).fetchone()
+        if not ev or get_moderator_club_id(request.uid) != ev["club_id"]:
+            return err("Not authorized for this event", 403)
     with conn() as c:
         c.execute("DELETE FROM events WHERE id=?",(eid,)); c.commit()
     return ok({"deleted":eid})
@@ -772,8 +926,10 @@ def list_recruitments(cid):
     return ok(recs)
 
 @app.route("/api/clubs/<int:cid>/recruitments", methods=["POST"])
-@admin_required
+@moderator_or_admin_required
 def create_recruitment(cid):
+    if request.role == "moderator" and get_moderator_club_id(request.uid) != cid:
+        return err("Not authorized for this club", 403)
     b = request.get_json() or {}
     title = (b.get("title") or "").strip()
     last_date = (b.get("last_date") or "").strip()
@@ -790,8 +946,13 @@ def create_recruitment(cid):
     return ok({"id":rid,"title":title},201)
 
 @app.route("/api/recruitments/<int:rid>", methods=["PUT"])
-@admin_required
+@moderator_or_admin_required
 def update_recruitment(rid):
+    if request.role == "moderator":
+        with conn() as c:
+            r_ = c.execute("SELECT club_id FROM recruitments WHERE id=?", (rid,)).fetchone()
+        if not r_ or get_moderator_club_id(request.uid) != r_["club_id"]:
+            return err("Not authorized", 403)
     b = request.get_json() or {}
     title = (b.get("title") or "").strip()
     last_date = (b.get("last_date") or "").strip()
@@ -807,8 +968,13 @@ def update_recruitment(rid):
     return ok({"id":rid})
 
 @app.route("/api/recruitments/<int:rid>", methods=["DELETE"])
-@admin_required
+@moderator_or_admin_required
 def delete_recruitment(rid):
+    if request.role == "moderator":
+        with conn() as c:
+            r_ = c.execute("SELECT club_id FROM recruitments WHERE id=?", (rid,)).fetchone()
+        if not r_ or get_moderator_club_id(request.uid) != r_["club_id"]:
+            return err("Not authorized", 403)
     with conn() as c:
         c.execute("DELETE FROM recruitments WHERE id=?",(rid,)); c.commit()
     return ok({"deleted":rid})
@@ -833,7 +999,7 @@ def send_club_notifications(user_id, cid):
             "SELECT event_date FROM notifications WHERE user_id=? AND message='__cleared__' ORDER BY event_date DESC LIMIT 1",
             (user_id,)).fetchone()
         upcoming = rows(c.execute(
-            "SELECT title,event_date,event_time FROM events WHERE club_id=? AND event_date>=? ORDER BY event_date",
+            "SELECT title,event_date,event_time FROM events WHERE club_id=? AND event_date>? ORDER BY event_date",
             (cid,today)).fetchall())
         for ev in upcoming:
             exists = c.execute(
@@ -902,10 +1068,14 @@ def check_subscription(cid):
 @app.route("/api/notifications")
 @auth_required
 def get_notifications():
+    today = datetime.utcnow().strftime("%Y-%m-%d")
     with conn() as c:
         notifs=rows(c.execute(
-            "SELECT * FROM notifications WHERE user_id=? AND message!='__cleared__' ORDER BY created DESC LIMIT 50",
-            (request.uid,)).fetchall())
+            """SELECT * FROM notifications
+               WHERE user_id=? AND message!='__cleared__'
+               AND (event_date IS NULL OR event_date >= ?)
+               ORDER BY created DESC LIMIT 50""",
+            (request.uid, today)).fetchall())
     return ok(notifs)
 
 @app.route("/api/notifications/read", methods=["POST"])
@@ -933,9 +1103,300 @@ def clear_notifications():
 @app.route("/api/notifications/unread-count")
 @auth_required
 def unread_count():
+    today = datetime.utcnow().strftime("%Y-%m-%d")
     with conn() as c:
-        count=c.execute("SELECT COUNT(*) as n FROM notifications WHERE user_id=? AND is_read=0",(request.uid,)).fetchone()
+        count=c.execute(
+            """SELECT COUNT(*) as n FROM notifications
+               WHERE user_id=? AND is_read=0 AND message!='__cleared__'
+               AND (event_date IS NULL OR event_date >= ?)""",
+            (request.uid, today)).fetchone()
     return ok({"count":count["n"]})
+
+# ── MODERATOR — get own assigned club ────────────────────────────────────
+@app.route("/api/moderator/my-club")
+@moderator_or_admin_required
+def moderator_my_club():
+    if request.role == "admin":
+        return err("Admins do not have an assigned club", 400)
+    cid = get_moderator_club_id(request.uid)
+    if not cid:
+        return err("No club assigned to this moderator", 404)
+    # Reuse get_club logic inline
+    mark_past()
+    with conn() as c:
+        cl = row(c.execute("SELECT * FROM clubs WHERE id=?", (cid,)).fetchone())
+        if not cl: return err("Club not found", 404)
+        cl["tags"] = json.loads(cl.get("tags") or "[]")
+        cl["execom"] = rows(c.execute(
+            "SELECT * FROM execom_members WHERE club_id=? ORDER BY sort_order,id", (cid,)).fetchall())
+        evs = rows(c.execute("SELECT * FROM events WHERE club_id=? ORDER BY event_date", (cid,)).fetchall())
+        for ev in evs:
+            ev["coordinators"] = rows(c.execute(
+                "SELECT * FROM event_coordinators WHERE event_id=?", (ev["id"],)).fetchall())
+            ev["photos"] = [{"id": r["id"], "photo_url": r["photo_url"]} for r in c.execute(
+                "SELECT id, photo_url FROM event_photos WHERE event_id=? AND event_type='club' ORDER BY id",
+                (ev["id"],)).fetchall()]
+        cl["events"] = evs
+        cl["recruitments"] = rows(c.execute(
+            "SELECT * FROM recruitments WHERE club_id=? ORDER BY created DESC", (cid,)).fetchall())
+        cl["members"] = rows(c.execute(
+            "SELECT * FROM club_members WHERE club_id=? ORDER BY created", (cid,)).fetchall())
+    return ok(cl)
+
+# ── CLUB MEMBERS (moderator + admin) ─────────────────────────────────────
+@app.route("/api/clubs/<int:cid>/members", methods=["POST"])
+@moderator_or_admin_required
+def add_club_member(cid):
+    if request.role == "moderator" and get_moderator_club_id(request.uid) != cid:
+        return err("Not authorized for this club", 403)
+    b = request.get_json() or {}
+    name = (b.get("name") or "").strip()
+    if not name: return err("name required")
+    with conn() as c:
+        cur = c.execute(
+            "INSERT INTO club_members(club_id,name,role,email,phone) VALUES(?,?,?,?,?)",
+            (cid, name, b.get("role",""), b.get("email",""), b.get("phone","")))
+        mid = cur.lastrowid; c.commit()
+    return ok({"id": mid}, 201)
+
+@app.route("/api/club-members/<int:mid>", methods=["PUT"])
+@moderator_or_admin_required
+def update_club_member(mid):
+    with conn() as c:
+        m = c.execute("SELECT club_id FROM club_members WHERE id=?", (mid,)).fetchone()
+    if not m: return err("Not found", 404)
+    if request.role == "moderator" and get_moderator_club_id(request.uid) != m["club_id"]:
+        return err("Not authorized", 403)
+    b = request.get_json() or {}
+    with conn() as c:
+        c.execute("UPDATE club_members SET name=?,role=?,email=?,phone=? WHERE id=?",
+                  (b.get("name",""), b.get("role",""), b.get("email",""), b.get("phone",""), mid))
+        c.commit()
+    return ok({"id": mid})
+
+@app.route("/api/club-members/<int:mid>", methods=["DELETE"])
+@moderator_or_admin_required
+def delete_club_member(mid):
+    with conn() as c:
+        m = c.execute("SELECT club_id FROM club_members WHERE id=?", (mid,)).fetchone()
+    if not m: return err("Not found", 404)
+    if request.role == "moderator" and get_moderator_club_id(request.uid) != m["club_id"]:
+        return err("Not authorized", 403)
+    with conn() as c:
+        c.execute("DELETE FROM club_members WHERE id=?", (mid,)); c.commit()
+    return ok({"deleted": mid})
+
+# ── ADMIN — USER MANAGEMENT ───────────────────────────────────────────────
+@app.route("/api/admin/users")
+@admin_required
+def list_users():
+    with conn() as c:
+        users_ = rows(c.execute(
+            "SELECT id,name,email,role,is_verified,created FROM users ORDER BY created DESC"
+        ).fetchall())
+        for u in users_:
+            if u["role"] == "moderator":
+                mc = c.execute("SELECT club_id FROM moderator_clubs WHERE user_id=?", (u["id"],)).fetchone()
+                u["assigned_club_id"] = mc["club_id"] if mc else None
+                # Check for pending request
+                req = c.execute("SELECT id,name,status FROM club_requests WHERE moderator_id=?",
+                                (u["id"],)).fetchone()
+                u["club_request"] = dict(req) if req else None
+            else:
+                u["assigned_club_id"] = None
+                u["club_request"] = None
+    return ok(users_)
+
+@app.route("/api/admin/users/<int:uid>", methods=["DELETE"])
+@admin_required
+def delete_user(uid):
+    with conn() as c:
+        u = c.execute("SELECT role FROM users WHERE id=?", (uid,)).fetchone()
+    if not u: return err("User not found", 404)
+    if u["role"] == "admin": return err("Cannot delete the main admin", 403)
+    with conn() as c:
+        c.execute("DELETE FROM users WHERE id=?", (uid,)); c.commit()
+    return ok({"deleted": uid})
+
+@app.route("/api/admin/clubs/<int:cid>/assign-moderator", methods=["POST"])
+@admin_required
+def assign_moderator_to_club(cid):
+    """Directly assign an existing moderator to a club that has no moderator."""
+    b = request.get_json() or {}
+    uid = b.get("user_id")
+    if not uid: return err("user_id required")
+    with conn() as c:
+        club = c.execute("SELECT id FROM clubs WHERE id=?", (cid,)).fetchone()
+        if not club: return err("Club not found", 404)
+        # Check no moderator already assigned
+        existing_mod = c.execute("SELECT user_id FROM moderator_clubs WHERE club_id=?", (cid,)).fetchone()
+        if existing_mod: return err("This club already has a moderator. Remove them first.", 400)
+        u = c.execute("SELECT id,role FROM users WHERE id=?", (uid,)).fetchone()
+        if not u: return err("User not found", 404)
+        if u["role"] == "admin": return err("Cannot assign admin as moderator", 403)
+        # If user is not yet a moderator, promote them
+        if u["role"] != "moderator":
+            c.execute("UPDATE users SET role='moderator' WHERE id=?", (uid,))
+        # Remove any existing moderator_clubs entry for this user (clean slate)
+        c.execute("DELETE FROM moderator_clubs WHERE user_id=?", (uid,))
+        # Clear stale club_requests for this user
+        c.execute("DELETE FROM club_requests WHERE moderator_id=?", (uid,))
+        # Link them to the club
+        c.execute("INSERT INTO moderator_clubs(user_id,club_id) VALUES(?,?)", (uid, cid))
+        # Insert an approved club_request record so their dashboard works
+        club_row = c.execute("SELECT name,description,department,tags,email,icon_url FROM clubs WHERE id=?", (cid,)).fetchone()
+        if club_row:
+            c.execute("""INSERT INTO club_requests(moderator_id,name,description,department,tags,email,icon_url,status)
+                         VALUES(?,?,?,?,?,?,?,'approved')""",
+                      (uid, club_row["name"], club_row["description"], club_row["department"],
+                       club_row["tags"], club_row["email"], club_row["icon_url"]))
+        c.commit()
+    return ok({"assigned": True})
+
+@app.route("/api/admin/users/<int:uid>/assign-moderator", methods=["POST"])
+@admin_required
+def assign_moderator(uid):
+    with conn() as c:
+        u = c.execute("SELECT id,role FROM users WHERE id=?", (uid,)).fetchone()
+        if not u: return err("User not found", 404)
+        if u["role"] == "admin": return err("Cannot change admin role", 403)
+        if u["role"] == "moderator": return err("User is already a moderator", 400)
+        c.execute("UPDATE users SET role='moderator' WHERE id=?", (uid,))
+        c.commit()
+    return ok({"assigned": True})
+
+@app.route("/api/admin/users/<int:uid>/remove-moderator", methods=["POST"])
+@admin_required
+def remove_moderator(uid):
+    with conn() as c:
+        u = c.execute("SELECT role FROM users WHERE id=?", (uid,)).fetchone()
+        if not u: return err("User not found", 404)
+        if u["role"] != "moderator": return err("User is not a moderator", 400)
+        c.execute("UPDATE users SET role='student' WHERE id=?", (uid,))
+        c.execute("DELETE FROM moderator_clubs WHERE user_id=?", (uid,))
+        c.commit()
+    return ok({"removed": True})
+
+# ── ADMIN — WEEK EVENTS ───────────────────────────────────────────────────
+@app.route("/api/admin/week-events")
+@admin_required
+def week_events():
+    mark_past()
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    week_end = (datetime.utcnow() + timedelta(days=7)).strftime("%Y-%m-%d")
+    with conn() as c:
+        club_evs = rows(c.execute(
+            "SELECT e.*, c.name as club_name, c.icon_url as club_icon FROM events e "
+            "JOIN clubs c ON e.club_id=c.id "
+            "WHERE e.event_date>=? AND e.event_date<=? ORDER BY e.event_date, e.event_time",
+            (today, week_end)).fetchall())
+        gen_evs = rows(c.execute(
+            "SELECT *, 'College Event' as club_name, NULL as club_icon FROM general_events "
+            "WHERE event_date>=? AND event_date<=? ORDER BY event_date, event_time",
+            (today, week_end)).fetchall())
+    # Merge and sort
+    all_evs = sorted(club_evs + gen_evs, key=lambda e: (e["event_date"], e.get("event_time") or ""))
+    for ev in all_evs:
+        ev["is_general"] = "club_id" not in ev or ev.get("club_id") is None
+    return ok(all_evs)
+
+# ── CLUB REQUESTS (moderator submits, admin approves) ─────────────────────
+@app.route("/api/moderator/request-club", methods=["POST"])
+@moderator_or_admin_required
+def request_club():
+    if request.role != "moderator":
+        return err("Only moderators can submit club requests", 403)
+    uid = request.uid
+    # Check if already has a club
+    if get_moderator_club_id(uid):
+        return err("You already manage a club", 400)
+    # Check for existing pending request
+    with conn() as c:
+        existing = c.execute("SELECT id,status FROM club_requests WHERE moderator_id=?", (uid,)).fetchone()
+    if existing and existing["status"] == "pending":
+        return err("You already have a pending club request", 400)
+    name = (request.form.get("name") or "").strip()
+    if not name: return err("Club name required")
+    desc  = request.form.get("description","")
+    dept  = request.form.get("department","General")
+    email = request.form.get("email","")
+    try: tags = json.loads(request.form.get("tags","[]"))
+    except: tags = [t.strip() for t in request.form.get("tags","").split(",") if t.strip()]
+    icon = save_file(request.files["icon"],"clubs") if "icon" in request.files else None
+    with conn() as c:
+        if existing:
+            # Re-submit after rejection
+            c.execute("""UPDATE club_requests SET name=?,description=?,department=?,tags=?,
+                         email=?,icon_url=?,status='pending',created=datetime('now')
+                         WHERE moderator_id=?""",
+                      (name,desc,dept,json.dumps(tags),email,icon,uid))
+        else:
+            c.execute("""INSERT INTO club_requests(moderator_id,name,description,department,
+                         tags,email,icon_url) VALUES(?,?,?,?,?,?,?)""",
+                      (uid,name,desc,dept,json.dumps(tags),email,icon))
+        c.commit()
+    return ok({"submitted": True})
+
+@app.route("/api/moderator/my-request")
+@moderator_or_admin_required
+def my_request():
+    if request.role != "moderator":
+        return err("Moderators only", 403)
+    with conn() as c:
+        req = c.execute("SELECT * FROM club_requests WHERE moderator_id=?",
+                        (request.uid,)).fetchone()
+    if not req: return ok(None)
+    r = dict(req)
+    r["tags"] = json.loads(r.get("tags") or "[]")
+    return ok(r)
+
+@app.route("/api/admin/club-requests")
+@admin_required
+def list_club_requests():
+    with conn() as c:
+        reqs = rows(c.execute("""
+            SELECT cr.*, u.name as moderator_name, u.email as moderator_email
+            FROM club_requests cr
+            JOIN users u ON cr.moderator_id=u.id
+            WHERE cr.status='pending'
+            ORDER BY cr.created DESC
+        """).fetchall())
+        for r in reqs:
+            r["tags"] = json.loads(r.get("tags") or "[]")
+    return ok(reqs)
+
+@app.route("/api/admin/club-requests/<int:rid>/approve", methods=["POST"])
+@admin_required
+def approve_club_request(rid):
+    with conn() as c:
+        req = c.execute("SELECT * FROM club_requests WHERE id=? AND status='pending'",
+                        (rid,)).fetchone()
+        if not req: return err("Request not found or already processed", 404)
+        req = dict(req)
+        # Create the actual club
+        cur = c.execute(
+            "INSERT INTO clubs(name,description,department,icon_url,tags,email) VALUES(?,?,?,?,?,?)",
+            (req["name"], req["description"], req["department"],
+             req["icon_url"], req["tags"], req["email"]))
+        club_id = cur.lastrowid
+        # Link moderator to new club
+        c.execute("INSERT OR REPLACE INTO moderator_clubs(user_id,club_id) VALUES(?,?)",
+                  (req["moderator_id"], club_id))
+        # Mark request approved
+        c.execute("UPDATE club_requests SET status='approved' WHERE id=?", (rid,))
+        c.commit()
+    return ok({"approved": True, "club_id": club_id})
+
+@app.route("/api/admin/club-requests/<int:rid>/reject", methods=["POST"])
+@admin_required
+def reject_club_request(rid):
+    with conn() as c:
+        req = c.execute("SELECT id FROM club_requests WHERE id=? AND status='pending'",
+                        (rid,)).fetchone()
+        if not req: return err("Request not found or already processed", 404)
+        c.execute("UPDATE club_requests SET status='rejected' WHERE id=?", (rid,))
+        c.commit()
+    return ok({"rejected": True})
 
 if __name__=="__main__":
     init_db()

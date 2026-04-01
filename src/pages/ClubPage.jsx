@@ -84,15 +84,17 @@ export default function ClubPage({ clubId, onBack, onEventClick }) {
           borderBottom:`1px solid ${C.border}`,padding:"0 48px",height:64,
           display:"flex",alignItems:"center",justifyContent:"space-between",
           position:"sticky",top:0,zIndex:100}}>
-        <button onClick={onBack} style={backBtn}>← Back to ClubVerse</button>
-        <button onClick={toggleSub} disabled={subLoading}
-          style={{background:subscribed?C.surface2:C.accent,
-            color:subscribed?C.muted:"#fff",
-            border:`1.5px solid ${subscribed?C.border:C.accent}`,
-            borderRadius:10,padding:"8px 20px",cursor:"pointer",
-            fontWeight:600,fontSize:".86rem",transition:"all .2s"}}>
-          {subLoading?"…":subscribed?"✓ Subscribed":"🔔 Subscribe"}
-        </button>
+        <button onClick={onBack} style={backBtn}>← Back </button>
+        {user?.role!=="admin" && user?.role!=="moderator" && (
+          <button onClick={toggleSub} disabled={subLoading}
+            style={{background:subscribed?C.surface2:C.accent,
+              color:subscribed?C.muted:"#fff",
+              border:`1.5px solid ${subscribed?C.border:C.accent}`,
+              borderRadius:10,padding:"8px 20px",cursor:"pointer",
+              fontWeight:600,fontSize:".86rem",transition:"all .2s"}}>
+            {subLoading?"…":subscribed?"✓ Subscribed":"🔔 Subscribe"}
+          </button>
+        )}
       </div>
 
       {/* Club header */}
