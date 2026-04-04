@@ -332,7 +332,10 @@ function NoClubState({ onBack, onSubmitted }) {
   const [request,setRequest] = useState(null); // existing request if any
   const [loadingReq,setLoadingReq] = useState(true);
   const [showForm,setShowForm] = useState(false);
+  const [submitted,setSubmitted] = useState(false); // hides form after submit
+  const [toast,setToast] = useState(null);
   const [form,setForm] = useState({name:"",description:"",department:"General",tags:"",email:""});
+  const [execomEntries,setExecomEntries] = useState([]);
   const [icon,setIcon] = useState(null);
   const [saving,setSaving] = useState(false);
   const [error,setError] = useState("");
@@ -344,6 +347,10 @@ function NoClubState({ onBack, onSubmitted }) {
       .finally(()=>setLoadingReq(false));
   },[]);
 
+  const addExecom = () => setExecomEntries(prev=>[...prev,{name:"",position:"",email:"",phone:""}]);
+  const updExecom = (i,k,v) => { const a=[...execomEntries]; a[i]={...a[i],[k]:v}; setExecomEntries(a); };
+  const delExecom = i => setExecomEntries(prev=>prev.filter((_,j)=>j!==i));
+
   const submit = async e => {
     e.preventDefault(); setError(""); setSaving(true);
     try {
@@ -353,6 +360,7 @@ function NoClubState({ onBack, onSubmitted }) {
       fd.append("department",form.department);
       fd.append("tags",JSON.stringify(form.tags.split(",").map(t=>t.trim()).filter(Boolean)));
       fd.append("email",form.email);
+      fd.append("execom",JSON.stringify(execomEntries.filter(m=>m.name.trim())));
       if (icon) fd.append("icon",icon);
       const token = localStorage.getItem("cv_token");
       const res = await fetch(`${API}/api/moderator/request-club`,{
@@ -360,8 +368,13 @@ function NoClubState({ onBack, onSubmitted }) {
       });
       const data = await res.json();
       if (!data.success) throw new Error(data.error);
-      // Reload to show pending state
-      onSubmitted();
+      // Show toast, hide form, show pending state
+      setToast({msg:"Request submitted! Awaiting admin approval.",type:"success"});
+      setSubmitted(true);
+      setShowForm(false);
+      // Reload request to show pending state
+      const r = await apiCall("/moderator/my-request").catch(()=>null);
+      if (r) setRequest(r);
     } catch(e) { setError(e.message||"Submission failed"); }
     finally { setSaving(false); }
   };
@@ -373,6 +386,7 @@ function NoClubState({ onBack, onSubmitted }) {
 
   return (
     <div style={{background:C.bg,minHeight:"100vh",fontFamily:"'Plus Jakarta Sans',sans-serif"}}>
+      {toast&&<Toast msg={toast.msg} type={toast.type} onDone={()=>setToast(null)}/>}
       {/* Nav */}
       <nav style={{background:"rgba(248,247,244,.93)",backdropFilter:"blur(20px)",
           borderBottom:`1px solid ${C.border}`,padding:"0 48px",height:64,display:"flex",
@@ -390,8 +404,8 @@ function NoClubState({ onBack, onSubmitted }) {
 
       <div style={{maxWidth:640,margin:"60px auto",padding:"0 24px"}}>
 
-        {/* Pending state */}
-        {request&&request.status==="pending"&&!showForm&&(
+        {/* Pending state — show after submit OR if already pending */}
+        {request&&(request.status==="pending"||submitted)&&!showForm&&(
           <div style={{textAlign:"center",padding:"48px 0"}}>
             <div style={{fontSize:"3rem",marginBottom:16}}>⏳</div>
             <h2 style={{fontFamily:"'Playfair Display',serif",fontSize:"1.8rem",fontWeight:700,marginBottom:8}}>
@@ -407,8 +421,32 @@ function NoClubState({ onBack, onSubmitted }) {
                   color:C.accent,fontWeight:600,marginBottom:10}}>Your Request</div>
               <div style={{fontWeight:700,fontSize:"1.1rem",marginBottom:4}}>{request.name}</div>
               <div style={{fontSize:".8rem",color:C.muted,marginBottom:4}}>{request.department}</div>
+              {(request.tags||[]).length>0&&(
+                <div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:6}}>
+                  {request.tags.map(t=>(
+                    <span key={t} style={{background:"rgba(30,58,138,.12)",color:C.accent,
+                        borderRadius:6,padding:"2px 10px",fontSize:".72rem"}}>{t}</span>
+                  ))}
+                </div>
+              )}
+              {request.email&&<div style={{fontSize:".8rem",color:C.muted,marginBottom:4}}>✉️ {request.email}</div>}
               {request.description&&(
                 <div style={{fontSize:".84rem",color:C.muted,lineHeight:1.6}}>{request.description}</div>
+              )}
+              {(request.execom||[]).length>0&&(
+                <div style={{marginTop:12,paddingTop:10,borderTop:"1px solid rgba(30,58,138,.15)"}}>
+                  <div style={{fontSize:".7rem",textTransform:"uppercase",letterSpacing:"1px",
+                      color:C.accent,fontWeight:600,marginBottom:8}}>
+                    ExeCom Members ({request.execom.length})
+                  </div>
+                  {request.execom.map((m,i)=>(
+                    <div key={i} style={{fontSize:".8rem",color:C.muted,marginBottom:3}}>
+                      <span style={{fontWeight:600,color:C.ink}}>{m.name}</span>
+                      {m.position&&<span style={{color:C.accent}}> · {m.position}</span>}
+                      {m.email&&<span> · {m.email}</span>}
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
           </div>
@@ -429,8 +467,8 @@ function NoClubState({ onBack, onSubmitted }) {
           </div>
         )}
 
-        {/* Club request form */}
-        {showForm&&(!request||request.status==="rejected")&&(
+        {/* Club request form — hidden after submit */}
+        {showForm&&!submitted&&(!request||request.status==="rejected")&&(
           <>
             <div style={{marginBottom:32}}>
               <h1 style={{fontFamily:"'Playfair Display',serif",fontSize:"2rem",fontWeight:700,marginBottom:8}}>
@@ -484,6 +522,37 @@ function NoClubState({ onBack, onSubmitted }) {
                       onChange={e=>setIcon(e.target.files[0]||null)}/>
                   </div>
                 </div>
+
+                {/* ExeCom Members */}
+                <div style={{marginTop:8,marginBottom:4}}>
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
+                    <div>
+                      <label style={lbl({marginBottom:2})}>Executive Committee Members</label>
+                      <p style={{fontSize:".76rem",color:C.muted,margin:0}}>(optional — can be added later)</p>
+                    </div>
+                    <button type="button" onClick={addExecom}
+                      style={pBtn("ghost",{padding:"5px 14px",fontSize:".78rem"})}>+ Add Member</button>
+                  </div>
+                  {execomEntries.map((m,i)=>(
+                    <div key={i} style={{background:C.surface2,borderRadius:12,padding:14,
+                        marginBottom:10,position:"relative"}}>
+                      <button type="button" onClick={()=>delExecom(i)}
+                        style={{position:"absolute",top:8,right:8,
+                          ...pBtn("ghost",{padding:"2px 8px",fontSize:".7rem"})}}>✕</button>
+                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                        {[["name","Name *"],["position","Role / Position"],["email","Email"],["phone","Phone"]].map(([k,pl])=>(
+                          <input key={k} placeholder={pl} value={m[k]||""}
+                            onChange={e=>updExecom(i,k,e.target.value)}
+                            style={inp({marginBottom:0})}/>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                  {execomEntries.length===0&&(
+                    <p style={{fontSize:".8rem",color:"#ccc",marginBottom:8}}>No ExeCom members added yet.</p>
+                  )}
+                </div>
+
                 {error&&<p style={{color:"#dc2626",fontSize:".82rem",marginBottom:12}}>{error}</p>}
                 <div style={{display:"flex",gap:10,justifyContent:"flex-end",marginTop:4}}>
                   <button type="button" onClick={onBack} style={pBtn("ghost")}>← Go Home</button>
@@ -883,11 +952,12 @@ export default function ModeratorDashboard({ onBack, onEventClick }) {
                   </button>
                 )}
               </div>
-              {(showEF||editEv)&&(
+              {/* Add new event form at top — only when adding, not editing */}
+              {showEF&&!editEv&&(
                 <div style={cardStyle({marginBottom:24,background:C.surface2,maxWidth:780})}>
-                  <h4 style={{fontWeight:700,marginBottom:16}}>{editEv?"Edit Event":"New Event"}</h4>
+                  <h4 style={{fontWeight:700,marginBottom:16}}>New Event</h4>
                   <EventForm
-                    clubId={club.id} event={editEv}
+                    clubId={club.id} event={null}
                     onSaved={async()=>{setShowEF(false);setEditEv(null);await load();setToast({msg:"Event saved!",type:"success"});}}
                     onCancel={()=>{setShowEF(false);setEditEv(null);}}
                   />
@@ -896,32 +966,57 @@ export default function ModeratorDashboard({ onBack, onEventClick }) {
               {(club.events||[]).length===0
                 ? <p style={{color:C.muted}}>No events yet. Click + Add Event to create one.</p>
                 : (club.events||[]).map(ev=>(
-                  <div key={ev.id} style={{background:C.surface,border:`1.5px solid ${C.border}`,
-                      borderRadius:14,padding:"14px 18px",display:"flex",
-                      alignItems:"center",justifyContent:"space-between",marginBottom:10,gap:12}}>
-                    <div style={{display:"flex",gap:12,alignItems:"center",minWidth:0}}>
-                      {ev.thumbnail_url&&(
-                        <img src={`${API}${ev.thumbnail_url}`} alt=""
-                          style={{width:40,height:40,borderRadius:8,objectFit:"cover",flexShrink:0}}/>
-                      )}
-                      <div style={{minWidth:0}}>
-                        <div style={{fontWeight:600,fontSize:".9rem",whiteSpace:"nowrap",
-                            overflow:"hidden",textOverflow:"ellipsis"}}>{ev.title}</div>
-                        <div style={{fontSize:".74rem",color:C.muted}}>
-                          {ev.event_date}{ev.event_time&&` · ${ev.event_time}`}
-                          {ev.event_date<today
-                            ?<span style={{marginLeft:8,background:C.surface2,color:C.muted,borderRadius:6,
-                                padding:"1px 7px",fontSize:".67rem",fontWeight:600}}>Past</span>
-                            :<span style={{marginLeft:8,background:C.greenBg,color:C.green,borderRadius:6,
-                                padding:"1px 7px",fontSize:".67rem",fontWeight:600}}>Upcoming</span>
-                          }
+                  <div key={ev.id}>
+                    {/* Event row */}
+                    <div style={{background:C.surface,
+                        border:`1.5px solid ${editEv?.id===ev.id?C.accent:C.border}`,
+                        borderRadius:editEv?.id===ev.id?"14px 14px 0 0":14,
+                        padding:"14px 18px",display:"flex",
+                        alignItems:"center",justifyContent:"space-between",
+                        marginBottom:editEv?.id===ev.id?0:10,gap:12,transition:"border-color .15s"}}>
+                      <div style={{display:"flex",gap:12,alignItems:"center",minWidth:0}}>
+                        {ev.thumbnail_url&&(
+                          <img src={`${API}${ev.thumbnail_url}`} alt=""
+                            style={{width:40,height:40,borderRadius:8,objectFit:"cover",flexShrink:0}}/>
+                        )}
+                        <div style={{minWidth:0}}>
+                          <div style={{fontWeight:600,fontSize:".9rem",whiteSpace:"nowrap",
+                              overflow:"hidden",textOverflow:"ellipsis"}}>{ev.title}</div>
+                          <div style={{fontSize:".74rem",color:C.muted}}>
+                            {ev.event_date}{ev.event_time&&` · ${ev.event_time}`}
+                            {ev.event_date<today
+                              ?<span style={{marginLeft:8,background:C.surface2,color:C.muted,borderRadius:6,
+                                  padding:"1px 7px",fontSize:".67rem",fontWeight:600}}>Past</span>
+                              :<span style={{marginLeft:8,background:C.greenBg,color:C.green,borderRadius:6,
+                                  padding:"1px 7px",fontSize:".67rem",fontWeight:600}}>Upcoming</span>
+                            }
+                          </div>
                         </div>
                       </div>
+                      <div style={{display:"flex",gap:8,flexShrink:0}}>
+                        <button
+                          onClick={()=>{setShowEF(false);setEditEv(editEv?.id===ev.id?null:ev);}}
+                          style={pBtn("ghost",{padding:"6px 12px",
+                            ...(editEv?.id===ev.id&&{background:C.accentBg,color:C.accent,borderColor:C.accent})})}>
+                          {editEv?.id===ev.id?"✕ Close":"Edit"}
+                        </button>
+                        <button onClick={()=>delEv(ev.id)} style={pBtn("danger",{padding:"6px 12px"})}>Delete</button>
+                      </div>
                     </div>
-                    <div style={{display:"flex",gap:8,flexShrink:0}}>
-                      <button onClick={()=>{setEditEv(ev);setShowEF(false);}} style={pBtn("ghost",{padding:"6px 12px"})}>Edit</button>
-                      <button onClick={()=>delEv(ev.id)} style={pBtn("danger",{padding:"6px 12px"})}>Delete</button>
-                    </div>
+                    {/* Inline edit form — directly below this event row */}
+                    {editEv?.id===ev.id&&(
+                      <div style={{...cardStyle({background:C.surface2}),
+                          borderTop:"none",borderRadius:"0 0 14px 14px",
+                          borderTop:`2px solid ${C.accent}`,marginBottom:10}}>
+                        <h4 style={{fontWeight:700,marginBottom:16}}>Edit Event</h4>
+                        <EventForm
+                          key={ev.id}
+                          clubId={club.id} event={editEv}
+                          onSaved={async()=>{setShowEF(false);setEditEv(null);await load();setToast({msg:"Event updated!",type:"success"});}}
+                          onCancel={()=>{setShowEF(false);setEditEv(null);}}
+                        />
+                      </div>
+                    )}
                   </div>
                 ))
               }

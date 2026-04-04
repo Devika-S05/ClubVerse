@@ -84,8 +84,8 @@ export default function ClubPage({ clubId, onBack, onEventClick }) {
           borderBottom:`1px solid ${C.border}`,padding:"0 48px",height:64,
           display:"flex",alignItems:"center",justifyContent:"space-between",
           position:"sticky",top:0,zIndex:100}}>
-        <button onClick={onBack} style={backBtn}>← Back </button>
-        {user?.role!=="admin" && user?.role!=="moderator" && (
+        <button onClick={onBack} style={backBtn}>← Back</button>
+        {user?.role!=="admin" && (
           <button onClick={toggleSub} disabled={subLoading}
             style={{background:subscribed?C.surface2:C.accent,
               color:subscribed?C.muted:"#fff",

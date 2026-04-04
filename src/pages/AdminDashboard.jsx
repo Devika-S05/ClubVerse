@@ -876,7 +876,7 @@ export default function AdminDashboard({ onBack, onEventClick, onClubClick, init
                             <div style={{fontWeight:700,fontSize:".96rem"}}>{cl.name}</div>
                             <div style={{fontSize:".74rem",color:C.muted}}>{cl.department}</div>
                           </div>
-                          <span style={{fontSize:".72rem",color:C.accent,fontWeight:600,flexShrink:0}}>View →</span>
+                          <span style={{fontSize:".72rem",color:C.accent,fontWeight:600,flexShrink:0}}></span>
                         </div>
                         {/* Moderator info */}
                         {cl.moderator ? (
@@ -900,7 +900,7 @@ export default function AdminDashboard({ onBack, onEventClick, onClubClick, init
                               onClick={e=>{e.stopPropagation();setAssignModal(cl);}}
                               style={pBtn("ghost",{padding:"4px 12px",fontSize:".72rem",
                                 color:C.accent,borderColor:C.accent,background:C.accentBg})}>
-                              Assign →
+                              Assign 
                             </button>
                           </div>
                         )}
@@ -934,7 +934,7 @@ export default function AdminDashboard({ onBack, onEventClick, onClubClick, init
                 Club Requests
               </h2>
               <p style={{color:C.muted,fontSize:".86rem",marginBottom:24}}>
-                Moderators submit these requests to create their club. Review and approve or reject.
+                Moderators submit these requests to create their club. Review all details, then approve or reject.
               </p>
               {pendingRequests.length===0?(
                 <div style={{textAlign:"center",padding:"80px 0",color:C.muted}}>
@@ -942,59 +942,114 @@ export default function AdminDashboard({ onBack, onEventClick, onClubClick, init
                   <p>No pending club requests.</p>
                 </div>
               ):(
-                <div style={{display:"flex",flexDirection:"column",gap:16}}>
+                <div style={{display:"flex",flexDirection:"column",gap:20}}>
                   {pendingRequests.map(req=>{
                     const icon = req.icon_url?`${API}${req.icon_url}`:null;
+                    const execomList = req.execom||[];
                     return (
-                      <div key={req.id} style={cardStyle()}>
-                        <div style={{display:"flex",alignItems:"flex-start",gap:16,flexWrap:"wrap"}}>
-                          {/* Club preview */}
-                          <div style={{display:"flex",gap:14,alignItems:"center",flex:1,minWidth:240}}>
+                      <div key={req.id} style={{...cardStyle(),borderLeft:`4px solid ${C.accent}`}}>
+
+                        {/* ── Top row: icon + name + moderator card ── */}
+                        <div style={{display:"flex",alignItems:"flex-start",gap:20,flexWrap:"wrap",marginBottom:16}}>
+                          {/* Club icon + name + dept + tags + email */}
+                          <div style={{display:"flex",gap:16,alignItems:"flex-start",flex:1,minWidth:240}}>
                             {icon
-                              ?<img src={icon} alt="" style={{width:56,height:56,borderRadius:12,objectFit:"cover",flexShrink:0}}/>
-                              :<div style={{width:56,height:56,borderRadius:12,background:C.surface2,
+                              ?<img src={icon} alt="" style={{width:64,height:64,borderRadius:14,
+                                  objectFit:"cover",flexShrink:0,border:`2px solid ${C.border}`}}/>
+                              :<div style={{width:64,height:64,borderRadius:14,background:C.accentBg,
                                   display:"flex",alignItems:"center",justifyContent:"center",
-                                  fontSize:"1.8rem",flexShrink:0}}>🏛️</div>
+                                  fontSize:"2rem",flexShrink:0}}>🏛️</div>
                             }
                             <div>
-                              <div style={{fontWeight:700,fontSize:"1rem",marginBottom:2}}>{req.name}</div>
-                              <div style={{fontSize:".76rem",color:C.muted,marginBottom:4}}>{req.department}</div>
-                              {(req.tags||[]).length>0&&(
-                                <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
-                                  {req.tags.map(t=>(
-                                    <span key={t} style={{background:C.surface2,color:C.muted,
-                                        borderRadius:6,padding:"1px 8px",fontSize:".68rem"}}>{t}</span>
-                                  ))}
-                                </div>
+                              <div style={{fontWeight:800,fontSize:"1.1rem",marginBottom:4}}>{req.name}</div>
+                              <div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:6}}>
+                                <span style={{background:C.accentBg,color:C.accent,borderRadius:8,
+                                    padding:"2px 10px",fontSize:".72rem",fontWeight:600}}>
+                                  {req.department}
+                                </span>
+                                {(req.tags||[]).map(t=>(
+                                  <span key={t} style={{background:C.surface2,color:C.muted,
+                                      borderRadius:8,padding:"2px 8px",fontSize:".7rem"}}>#{t}</span>
+                                ))}
+                              </div>
+                              {req.email&&(
+                                <div style={{fontSize:".76rem",color:C.muted}}>✉️ {req.email}</div>
                               )}
                             </div>
                           </div>
-                          {/* Moderator info */}
-                          <div style={{background:C.accentBg,borderRadius:12,padding:"12px 16px",minWidth:200}}>
-                            <div style={{fontSize:".68rem",textTransform:"uppercase",letterSpacing:"1px",
-                                color:C.accent,fontWeight:600,marginBottom:6}}>Requested by</div>
-                            <div style={{fontWeight:700,fontSize:".9rem"}}>{req.moderator_name}</div>
-                            <div style={{fontSize:".76rem",color:C.muted}}>{req.moderator_email}</div>
-                            <div style={{fontSize:".72rem",color:C.muted,marginTop:4}}>
-                              {new Date(req.created).toLocaleDateString("en-GB",
+                          {/* Moderator info card */}
+                          <div style={{background:C.accentBg,borderRadius:14,padding:"14px 18px",
+                              minWidth:210,border:`1px solid rgba(30,58,138,.15)`}}>
+                            <div style={{fontSize:".66rem",textTransform:"uppercase",letterSpacing:"1.2px",
+                                color:C.accent,fontWeight:700,marginBottom:8}}>Requested by</div>
+                            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:4}}>
+                              <div style={{width:32,height:32,borderRadius:"50%",background:C.accent,
+                                  display:"flex",alignItems:"center",justifyContent:"center",
+                                  color:"#fff",fontWeight:700,fontSize:".88rem",flexShrink:0}}>
+                                {req.moderator_name?.charAt(0).toUpperCase()}
+                              </div>
+                              <div>
+                                <div style={{fontWeight:700,fontSize:".9rem",color:C.ink}}>{req.moderator_name}</div>
+                                <div style={{fontSize:".74rem",color:C.muted}}>{req.moderator_email}</div>
+                              </div>
+                            </div>
+                            <div style={{fontSize:".72rem",color:C.muted,marginTop:6,
+                                paddingTop:8,borderTop:`1px solid rgba(30,58,138,.12)`}}>
+                              🕐 {new Date(req.created).toLocaleDateString("en-GB",
                                 {day:"numeric",month:"short",year:"numeric"})}
                             </div>
                           </div>
                         </div>
+
+                        {/* ── Description ── */}
                         {req.description&&(
-                          <p style={{fontSize:".84rem",color:C.muted,lineHeight:1.6,
-                              margin:"14px 0 0",paddingTop:14,borderTop:`1px solid ${C.border}`}}>
-                            {req.description}
-                          </p>
+                          <div style={{background:C.surface2,borderRadius:12,
+                              padding:"12px 16px",marginBottom:14}}>
+                            <div style={{fontSize:".68rem",textTransform:"uppercase",letterSpacing:"1px",
+                                color:C.muted,fontWeight:600,marginBottom:6}}>Description</div>
+                            <p style={{fontSize:".88rem",color:C.ink,lineHeight:1.7,margin:0}}>
+                              {req.description}
+                            </p>
+                          </div>
                         )}
-                        <div style={{display:"flex",gap:10,marginTop:16,paddingTop:14,
-                            borderTop:`1px solid ${C.border}`}}>
+
+                        {/* ── ExeCom Members ── */}
+                        {execomList.length>0&&(
+                          <div style={{marginBottom:14}}>
+                            <div style={{fontSize:".68rem",textTransform:"uppercase",letterSpacing:"1px",
+                                color:C.muted,fontWeight:600,marginBottom:10}}>
+                              Executive Committee ({execomList.length} member{execomList.length!==1?"s":""})
+                            </div>
+                            <div style={{display:"grid",
+                                gridTemplateColumns:"repeat(auto-fill,minmax(210px,1fr))",gap:10}}>
+                              {execomList.map((m,i)=>(
+                                <div key={i} style={{background:C.surface,border:`1.5px solid ${C.border}`,
+                                    borderRadius:12,padding:"12px 14px",display:"flex",gap:10,alignItems:"flex-start"}}>
+                                  <div style={{width:34,height:34,borderRadius:"50%",background:C.accentBg,
+                                      display:"flex",alignItems:"center",justifyContent:"center",
+                                      fontWeight:700,color:C.accent,fontSize:".86rem",flexShrink:0}}>
+                                    {(m.name||"?").charAt(0).toUpperCase()}
+                                  </div>
+                                  <div style={{minWidth:0}}>
+                                    <div style={{fontWeight:600,fontSize:".86rem"}}>{m.name}</div>
+                                    {m.position&&<div style={{fontSize:".74rem",color:C.accent,fontWeight:600}}>{m.position}</div>}
+                                    {m.email&&<div style={{fontSize:".72rem",color:C.muted,marginTop:2}}>✉️ {m.email}</div>}
+                                    {m.phone&&<div style={{fontSize:".72rem",color:C.muted}}>📞 {m.phone}</div>}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* ── Action buttons ── */}
+                        <div style={{display:"flex",gap:10,paddingTop:14,borderTop:`1px solid ${C.border}`}}>
                           <button onClick={()=>approveRequest(req.id)}
-                            style={pBtn("accent",{padding:"8px 22px"})}>
+                            style={pBtn("accent",{padding:"9px 24px"})}>
                             ✓ Approve & Create Club
                           </button>
                           <button onClick={()=>rejectRequest(req.id)}
-                            style={pBtn("danger",{padding:"8px 22px"})}>
+                            style={pBtn("danger",{padding:"9px 24px"})}>
                             ✗ Reject
                           </button>
                         </div>

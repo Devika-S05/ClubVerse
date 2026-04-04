@@ -667,8 +667,11 @@ def create_club():
     return ok({"id":cid,"name":name},201)
 
 @app.route("/api/clubs/<int:cid>",methods=["PUT"])
-@admin_required
+@moderator_or_admin_required
 def update_club(cid):
+    # Moderator can only edit their own assigned club
+    if request.role == "moderator" and get_moderator_club_id(request.uid) != cid:
+        return err("You can only edit your own club", 403)
     name=(request.form.get("name") or "").strip()
     desc=request.form.get("description","")
     dept=request.form.get("department","General")
@@ -833,7 +836,14 @@ def delete_event(eid):
         if not ev or get_moderator_club_id(request.uid) != ev["club_id"]:
             return err("Not authorized for this event", 403)
     with conn() as c:
-        c.execute("DELETE FROM events WHERE id=?",(eid,)); c.commit()
+        # Get event details before deleting to clean up notifications
+        ev_row = c.execute("SELECT title FROM events WHERE id=?", (eid,)).fetchone()
+        c.execute("DELETE FROM events WHERE id=?",(eid,))
+        # Delete notifications for this event so they don't linger
+        if ev_row:
+            c.execute("DELETE FROM notifications WHERE event_title=? AND message!='__cleared__'",
+                      (ev_row["title"],))
+        c.commit()
     return ok({"deleted":eid})
 
 # GENERAL EVENTS
@@ -1283,17 +1293,23 @@ def remove_moderator(uid):
 def week_events():
     mark_past()
     today = datetime.utcnow().strftime("%Y-%m-%d")
-    week_end = (datetime.utcnow() + timedelta(days=7)).strftime("%Y-%m-%d")
+    # Current calendar week: Monday to Sunday
+    # weekday() returns 0=Mon … 6=Sun
+    today_dt  = datetime.utcnow().date()
+    week_start = today_dt - timedelta(days=today_dt.weekday())        # Monday
+    week_end   = week_start + timedelta(days=6)                       # Sunday
+    ws = week_start.strftime("%Y-%m-%d")
+    we = week_end.strftime("%Y-%m-%d")
     with conn() as c:
         club_evs = rows(c.execute(
             "SELECT e.*, c.name as club_name, c.icon_url as club_icon FROM events e "
             "JOIN clubs c ON e.club_id=c.id "
             "WHERE e.event_date>=? AND e.event_date<=? ORDER BY e.event_date, e.event_time",
-            (today, week_end)).fetchall())
+            (ws, we)).fetchall())
         gen_evs = rows(c.execute(
             "SELECT *, 'College Event' as club_name, NULL as club_icon FROM general_events "
             "WHERE event_date>=? AND event_date<=? ORDER BY event_date, event_time",
-            (today, week_end)).fetchall())
+            (ws, we)).fetchall())
     # Merge and sort
     all_evs = sorted(club_evs + gen_evs, key=lambda e: (e["event_date"], e.get("event_time") or ""))
     for ev in all_evs:
@@ -1322,18 +1338,20 @@ def request_club():
     email = request.form.get("email","")
     try: tags = json.loads(request.form.get("tags","[]"))
     except: tags = [t.strip() for t in request.form.get("tags","").split(",") if t.strip()]
+    try: execom = json.loads(request.form.get("execom","[]"))
+    except: execom = []
     icon = save_file(request.files["icon"],"clubs") if "icon" in request.files else None
     with conn() as c:
         if existing:
             # Re-submit after rejection
             c.execute("""UPDATE club_requests SET name=?,description=?,department=?,tags=?,
-                         email=?,icon_url=?,status='pending',created=datetime('now')
+                         email=?,icon_url=?,execom=?,status='pending',created=datetime('now')
                          WHERE moderator_id=?""",
-                      (name,desc,dept,json.dumps(tags),email,icon,uid))
+                      (name,desc,dept,json.dumps(tags),email,icon,json.dumps(execom),uid))
         else:
             c.execute("""INSERT INTO club_requests(moderator_id,name,description,department,
-                         tags,email,icon_url) VALUES(?,?,?,?,?,?,?)""",
-                      (uid,name,desc,dept,json.dumps(tags),email,icon))
+                         tags,email,icon_url,execom) VALUES(?,?,?,?,?,?,?,?)""",
+                      (uid,name,desc,dept,json.dumps(tags),email,icon,json.dumps(execom)))
         c.commit()
     return ok({"submitted": True})
 
@@ -1347,7 +1365,8 @@ def my_request():
                         (request.uid,)).fetchone()
     if not req: return ok(None)
     r = dict(req)
-    r["tags"] = json.loads(r.get("tags") or "[]")
+    r["tags"]   = json.loads(r.get("tags")   or "[]")
+    r["execom"] = json.loads(r.get("execom") or "[]")
     return ok(r)
 
 @app.route("/api/admin/club-requests")
@@ -1362,7 +1381,8 @@ def list_club_requests():
             ORDER BY cr.created DESC
         """).fetchall())
         for r in reqs:
-            r["tags"] = json.loads(r.get("tags") or "[]")
+            r["tags"]   = json.loads(r.get("tags")   or "[]")
+            r["execom"] = json.loads(r.get("execom") or "[]")
     return ok(reqs)
 
 @app.route("/api/admin/club-requests/<int:rid>/approve", methods=["POST"])
@@ -1397,6 +1417,64 @@ def reject_club_request(rid):
         c.execute("UPDATE club_requests SET status='rejected' WHERE id=?", (rid,))
         c.commit()
     return ok({"rejected": True})
+
+# ── FORGOT PASSWORD ───────────────────────────────────────────────────────
+@app.route("/api/auth/forgot-password", methods=["POST"])
+def forgot_password():
+    """Step 1: user enters email → send OTP for password reset."""
+    b = request.get_json() or {}
+    email = (b.get("email") or "").strip().lower()
+    if not email: return err("Email is required")
+    with conn() as c:
+        u = c.execute("SELECT id,name,is_verified FROM users WHERE email=?", (email,)).fetchone()
+    if not u: return err("No account found with that email address", 404)
+    if not u["is_verified"]: return err("This account has not been verified yet", 403)
+    otp = str(secrets.randbelow(900000) + 100000)
+    expiry = (datetime.utcnow() + timedelta(minutes=10)).strftime("%Y-%m-%d %H:%M:%S")
+    with conn() as c:
+        c.execute("UPDATE users SET otp=?,otp_expiry=? WHERE email=?", (otp, expiry, email))
+        c.commit()
+    sent = send_otp_email(email, u["name"], otp)
+    if not sent: return err("Failed to send email. Please try again.")
+    return ok({"sent": True})
+
+@app.route("/api/auth/forgot-verify-otp", methods=["POST"])
+def forgot_verify_otp():
+    """Step 2: verify the OTP sent for password reset."""
+    b = request.get_json() or {}
+    email = (b.get("email") or "").strip().lower()
+    otp   = (b.get("otp") or "").strip()
+    if not email or not otp: return err("Email and OTP required")
+    with conn() as c:
+        u = c.execute("SELECT id,otp,otp_expiry FROM users WHERE email=?", (email,)).fetchone()
+    if not u: return err("Email not found", 404)
+    if not u["otp"] or u["otp"] != otp: return err("Invalid code", 400)
+    if datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S") > (u["otp_expiry"] or ""):
+        return err("Code expired. Please request a new one.", 400)
+    # Clear OTP so it can't be reused
+    with conn() as c:
+        c.execute("UPDATE users SET otp=NULL,otp_expiry=NULL WHERE id=?", (u["id"],))
+        c.commit()
+    return ok({"verified": True})
+
+@app.route("/api/auth/reset-password", methods=["POST"])
+def reset_password():
+    """Step 3: set new password after OTP verified."""
+    b = request.get_json() or {}
+    email    = (b.get("email") or "").strip().lower()
+    password = (b.get("password") or "")
+    if not email or not password: return err("Email and password required")
+    if len(password) < 6: return err("Password must be at least 6 characters")
+    with conn() as c:
+        u = c.execute("SELECT id,name,role FROM users WHERE email=?", (email,)).fetchone()
+    if not u: return err("Email not found", 404)
+    h = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+    with conn() as c:
+        c.execute("UPDATE users SET password=? WHERE id=?", (h, u["id"]))
+        c.commit()
+    # Return a token so user is immediately logged in after reset
+    return ok({"token": make_token(u["id"], u["role"]),
+               "user": {"id": u["id"], "name": u["name"], "email": email, "role": u["role"]}})
 
 if __name__=="__main__":
     init_db()

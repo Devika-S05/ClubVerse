@@ -53,6 +53,7 @@ function AuthModal({ onClose }) {
   const { login } = useAuth();
   const [tab,   setTab]  = useState("login");
   // Register steps: "details" -> "otp" -> "password"
+  // Forgot steps: "forgot" -> "forgot-otp" -> "forgot-reset"
   const [step,  setStep] = useState("details");
   const [form,  setForm] = useState({name:"", email:"", otp:"", password:"", confirm:""});
   const [err,   setErr]  = useState("");
@@ -108,6 +109,50 @@ function AuthModal({ onClose }) {
     } catch(e) { setErr(e.message); }
   };
 
+  // ── Forgot password handlers ──
+  const handleForgotSendOTP = async () => {
+    if (!form.email.trim()) { setErr("Please enter your email address"); return; }
+    setErr(""); setBusy(true);
+    try {
+      await apiCall("/auth/forgot-password","POST",{email:form.email});
+      setStep("forgot-otp");
+    } catch(e) { setErr(e.message); }
+    finally { setBusy(false); }
+  };
+
+  const handleForgotVerifyOTP = async () => {
+    if (form.otp.length!==6) { setErr("Enter the 6-digit code"); return; }
+    setErr(""); setBusy(true);
+    try {
+      await apiCall("/auth/forgot-verify-otp","POST",{email:form.email,otp:form.otp});
+      setStep("forgot-reset");
+    } catch(e) { setErr(e.message); }
+    finally { setBusy(false); }
+  };
+
+  const handleForgotResend = async () => {
+    try {
+      await apiCall("/auth/forgot-password","POST",{email:form.email});
+      setResent(true); setTimeout(()=>setResent(false),3000);
+    } catch(e) { setErr(e.message); }
+  };
+
+  const handleResetPassword = async () => {
+    if (form.password.length<6) { setErr("Password must be at least 6 characters"); return; }
+    if (form.password!==form.confirm) { setErr("Passwords do not match"); return; }
+    setErr(""); setBusy(true);
+    try {
+      const d = await apiCall("/auth/reset-password","POST",{email:form.email,password:form.password});
+      localStorage.setItem("cv_token", d.token);
+      window.location.reload();
+    } catch(e) { setErr(e.message); }
+    finally { setBusy(false); }
+  };
+
+  const goBackToLogin = () => { setTab("login"); setStep("details"); setErr(""); setForm({name:"",email:"",otp:"",password:"",confirm:""}); };
+
+  const isForgotFlow = step==="forgot"||step==="forgot-otp"||step==="forgot-reset";
+
   return (
     <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(23,21,15,.48)",
         backdropFilter:"blur(6px)",zIndex:600,display:"flex",alignItems:"center",
@@ -119,8 +164,8 @@ function AuthModal({ onClose }) {
             border:`1px solid ${C.border}`,width:32,height:32,borderRadius:8,
             cursor:"pointer",color:C.muted,fontSize:"1rem"}}>✕</button>
 
-        {/* Tab switcher — only on first step */}
-        {(tab==="login" || step==="details") && (
+        {/* Tab switcher — only on first step, not in forgot flow */}
+        {!isForgotFlow && (tab==="login" || step==="details") && (
           <div style={{display:"flex",borderBottom:`1px solid ${C.border}`,marginBottom:28}}>
             {[["login","Sign In"],["register","Create Account"]].map(([t,lbl])=>(
               <button key={t} onClick={()=>{setTab(t);setStep("details");setErr("");}}
@@ -134,7 +179,7 @@ function AuthModal({ onClose }) {
         )}
 
         {/* ── LOGIN ── */}
-        {tab==="login" && (<>
+        {tab==="login" && !isForgotFlow && (<>
           <h2 style={{fontFamily:"'Playfair Display',serif",fontSize:"1.8rem",fontWeight:700,marginBottom:6}}>
             Welcome back
           </h2>
@@ -148,9 +193,15 @@ function AuthModal({ onClose }) {
           {err && <p style={{color:"#dc2626",fontSize:".82rem",marginBottom:10}}>{err}</p>}
           <button onClick={handleLogin} disabled={busy}
             style={{width:"100%",background:busy?C.muted:C.ink,color:"#fff",border:"none",
-              borderRadius:10,padding:13,fontWeight:600,fontSize:".94rem",cursor:"pointer"}}>
+              borderRadius:10,padding:13,fontWeight:600,fontSize:".94rem",cursor:"pointer",marginBottom:12}}>
             {busy?"Please wait…":"Sign In"}
           </button>
+          <p style={{textAlign:"center",fontSize:".82rem",color:C.muted}}>
+            <span onClick={()=>{setStep("forgot");setErr("");setForm(f=>({...f,password:"",confirm:"",otp:""}));}}
+              style={{color:C.accent,cursor:"pointer",fontWeight:600}}>
+              Forgot password?
+            </span>
+          </p>
         </>)}
 
         {/* ── REGISTER STEP 1: Name + Email ── */}
@@ -252,6 +303,107 @@ function AuthModal({ onClose }) {
             {busy?"Creating account…":"Create Account"}
           </button>
         </>)}
+
+        {/* ── FORGOT STEP 1: Enter email ── */}
+        {step==="forgot" && (<>
+          <div style={{textAlign:"center",marginBottom:24}}>
+            <div style={{width:56,height:56,borderRadius:"50%",background:C.accentBg,
+                display:"flex",alignItems:"center",justifyContent:"center",
+                fontSize:"1.6rem",margin:"0 auto 14px"}}>🔑</div>
+            <h2 style={{fontFamily:"'Playfair Display',serif",fontSize:"1.6rem",fontWeight:700,marginBottom:8}}>
+              Forgot Password
+            </h2>
+            <p style={{color:C.muted,fontSize:".84rem",lineHeight:1.6}}>
+              Enter your registered email address.<br/>We'll send you a reset code.
+            </p>
+          </div>
+          <input type="email" placeholder="Email address" value={form.email}
+            onChange={e=>setForm({...form,email:e.target.value})}
+            onKeyDown={e=>e.key==="Enter"&&handleForgotSendOTP()} style={iStyle()}/>
+          {err && <p style={{color:"#dc2626",fontSize:".82rem",marginBottom:10}}>{err}</p>}
+          <button onClick={handleForgotSendOTP} disabled={busy}
+            style={{width:"100%",background:busy?C.muted:C.ink,color:"#fff",border:"none",
+              borderRadius:10,padding:13,fontWeight:600,fontSize:".94rem",cursor:"pointer",marginBottom:12}}>
+            {busy?"Sending code…":"Send Reset Code"}
+          </button>
+          <p style={{textAlign:"center",fontSize:".82rem",color:C.muted}}>
+            <span onClick={goBackToLogin} style={{color:C.accent,cursor:"pointer",fontWeight:600}}>
+              ← Back to Sign In
+            </span>
+          </p>
+        </>)}
+
+        {/* ── FORGOT STEP 2: OTP ── */}
+        {step==="forgot-otp" && (<>
+          <div style={{textAlign:"center",marginBottom:28}}>
+            <div style={{width:56,height:56,borderRadius:"50%",background:C.accentBg,
+                display:"flex",alignItems:"center",justifyContent:"center",
+                fontSize:"1.6rem",margin:"0 auto 14px"}}>📧</div>
+            <h2 style={{fontFamily:"'Playfair Display',serif",fontSize:"1.6rem",fontWeight:700,marginBottom:8}}>
+              Check your email
+            </h2>
+            <p style={{color:C.muted,fontSize:".84rem",lineHeight:1.6}}>
+              We sent a 6-digit reset code to<br/>
+              <strong style={{color:C.ink}}>{form.email}</strong>
+            </p>
+          </div>
+          {/* OTP boxes — reuse same id-free approach */}
+          <div style={{display:"flex",gap:8,justifyContent:"center",marginBottom:20,cursor:"text"}}
+            onClick={()=>document.getElementById("fp-otp-input").focus()}>
+            {Array.from({length:6},(_,i)=>(
+              <div key={i} style={{
+                width:44,height:52,borderRadius:12,
+                background:form.otp[i]?C.accentBg:C.surface2,
+                border:`2px solid ${i===form.otp.length&&form.otp.length<6?C.accent:form.otp[i]?C.accent:C.border}`,
+                display:"flex",alignItems:"center",justifyContent:"center",
+                fontFamily:"'Playfair Display',serif",fontSize:"1.5rem",fontWeight:900,
+                color:C.accent,transition:"all .15s"}}>
+                {form.otp[i] || ""}
+              </div>
+            ))}
+          </div>
+          <input id="fp-otp-input" value={form.otp}
+            onChange={e=>setForm({...form,otp:e.target.value.replace(/[^0-9]/g,"").slice(0,6)})}
+            onKeyDown={e=>e.key==="Enter"&&handleForgotVerifyOTP()}
+            maxLength={6} autoFocus
+            style={{position:"absolute",opacity:0,width:0,height:0,pointerEvents:"none"}}/>
+          {err && <p style={{color:"#dc2626",fontSize:".82rem",marginBottom:12,textAlign:"center"}}>{err}</p>}
+          <button onClick={handleForgotVerifyOTP} disabled={busy||form.otp.length!==6}
+            style={{width:"100%",background:busy||form.otp.length!==6?C.muted:C.ink,
+              color:"#fff",border:"none",borderRadius:10,padding:13,fontWeight:600,
+              fontSize:".94rem",cursor:form.otp.length===6?"pointer":"default",marginBottom:12,transition:"all .2s"}}>
+            {busy?"Verifying…":"Verify Code"}
+          </button>
+          <p style={{textAlign:"center",fontSize:".82rem",color:C.muted}}>
+            Didn't get it?{" "}
+            <span onClick={handleForgotResend} style={{color:C.accent,cursor:"pointer",fontWeight:600}}>
+              {resent?"✓ Sent!":"Resend code"}
+            </span>
+          </p>
+        </>)}
+
+        {/* ── FORGOT STEP 3: New Password ── */}
+        {step==="forgot-reset" && (<>
+          <div style={{textAlign:"center",marginBottom:20}}>
+            <div style={{fontSize:"2.4rem",marginBottom:10}}>🔒</div>
+            <h2 style={{fontFamily:"'Playfair Display',serif",fontSize:"1.6rem",fontWeight:700,marginBottom:6}}>
+              Set New Password
+            </h2>
+            <p style={{color:C.muted,fontSize:".86rem"}}>Choose a new secure password for your account.</p>
+          </div>
+          <input type="password" placeholder="New password (min 6 characters)" value={form.password}
+            onChange={e=>setForm({...form,password:e.target.value})} style={iStyle()}/>
+          <input type="password" placeholder="Confirm new password" value={form.confirm}
+            onChange={e=>setForm({...form,confirm:e.target.value})}
+            onKeyDown={e=>e.key==="Enter"&&handleResetPassword()} style={iStyle()}/>
+          {err && <p style={{color:"#dc2626",fontSize:".82rem",marginBottom:10}}>{err}</p>}
+          <button onClick={handleResetPassword} disabled={busy}
+            style={{width:"100%",background:busy?C.muted:C.ink,color:"#fff",border:"none",
+              borderRadius:10,padding:13,fontWeight:600,fontSize:".94rem",cursor:"pointer"}}>
+            {busy?"Resetting…":"Reset Password"}
+          </button>
+        </>)}
+
       </div>
     </div>
   );
@@ -434,6 +586,11 @@ function EventCard({ ev, onClick }) {
         {ev.event_time && (
           <div style={{fontSize:".74rem",color:C.muted,marginBottom:2}}>
             ⏰ {ev.event_time}
+          </div>
+        )}
+        {ev.location && (
+          <div style={{fontSize:".74rem",color:C.muted,marginBottom:2}}>
+            📍 {ev.location}
           </div>
         )}
         {ev.description && (
