@@ -300,6 +300,16 @@ def init_db():
         c.commit()
     print("DB ready — admin@clubverse.edu / admin123")
 
+def is_recruitment_open(r):
+    """Return True if recruitment deadline (last_date + time) has not passed yet."""
+    today  = datetime.utcnow().strftime("%Y-%m-%d")
+    now_t  = datetime.utcnow().strftime("%H:%M")
+    ld     = (r.get("last_date") or "")
+    rt     = (r.get("time") or "").strip()
+    if ld > today:  return True
+    if ld == today: return (not rt) or (now_t <= rt)
+    return False
+
 def mark_past():
     now = datetime.utcnow()
     today = now.strftime("%Y-%m-%d")
@@ -631,8 +641,10 @@ def get_club(cid):
                 "SELECT id, photo_url FROM event_photos WHERE event_id=? AND event_type='club' ORDER BY id",
                 (ev["id"],)).fetchall()]
         cl["events"]=evs
-        cl["recruitments"]=rows(c.execute(
-            "SELECT * FROM recruitments WHERE club_id=? ORDER BY created DESC",(cid,)).fetchall())
+        recs = rows(c.execute(
+            "SELECT * FROM recruitments WHERE club_id=? AND is_active=1 AND last_date>=? ORDER BY created DESC",
+            (cid, datetime.utcnow().strftime("%Y-%m-%d"))).fetchall())
+        cl["recruitments"] = [r for r in recs if is_recruitment_open(r)]
         # Club members only visible to admin and the moderator of this club
         if caller_role == "admin":
             cl["members"] = rows(c.execute(
@@ -991,11 +1003,13 @@ def delete_recruitment(rid):
 
 @app.route("/api/recruitments")
 def all_recruitments():
+    today = datetime.utcnow().strftime("%Y-%m-%d")
     with conn() as c:
         recs = rows(c.execute(
             "SELECT r.*,cl.name as club_name,cl.icon_url as club_icon FROM recruitments r "
-            "JOIN clubs cl ON r.club_id=cl.id WHERE r.is_active=1 ORDER BY r.last_date").fetchall())
-    return ok(recs)
+            "JOIN clubs cl ON r.club_id=cl.id WHERE r.is_active=1 AND r.last_date>=? ORDER BY r.last_date",
+            (today,)).fetchall())
+    return ok([r for r in recs if is_recruitment_open(r)])
 
 # SUBSCRIPTIONS
 def send_club_notifications(user_id, cid):
@@ -1147,8 +1161,10 @@ def moderator_my_club():
                 "SELECT id, photo_url FROM event_photos WHERE event_id=? AND event_type='club' ORDER BY id",
                 (ev["id"],)).fetchall()]
         cl["events"] = evs
-        cl["recruitments"] = rows(c.execute(
-            "SELECT * FROM recruitments WHERE club_id=? ORDER BY created DESC", (cid,)).fetchall())
+        recs2 = rows(c.execute(
+            "SELECT * FROM recruitments WHERE club_id=? AND is_active=1 AND last_date>=? ORDER BY created DESC",
+            (cid, datetime.utcnow().strftime("%Y-%m-%d"))).fetchall())
+        cl["recruitments"] = [r for r in recs2 if is_recruitment_open(r)]
         cl["members"] = rows(c.execute(
             "SELECT * FROM club_members WHERE club_id=? ORDER BY created", (cid,)).fetchall())
     return ok(cl)

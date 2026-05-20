@@ -820,13 +820,14 @@ export default function ModeratorDashboard({ onBack, onEventClick }) {
                     </p>
                   )}
                 </div>
+                {/*
                 <button onClick={()=>setView("editClub")}
                   style={{background:"rgba(255,255,255,.18)",color:"#fff",
                     border:"1.5px solid rgba(255,255,255,.4)",borderRadius:12,
                     padding:"10px 22px",cursor:"pointer",fontWeight:600,fontSize:".85rem",
                     flexShrink:0,whiteSpace:"nowrap"}}>
                   ✏️ Edit Club
-                </button>
+                </button>*/}
               </div>
 
               {/* Stat cards — no icons, clean numbers */}
@@ -915,7 +916,7 @@ export default function ModeratorDashboard({ onBack, onEventClick }) {
                 </div>
               )}
 
-              {/* Quick links strip */}
+              {/* Quick links strip 
               <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))",gap:10}}>
                 {[
                   {key:"events",     label:"Manage Events",     desc:"Add or edit club events"},
@@ -933,9 +934,10 @@ export default function ModeratorDashboard({ onBack, onEventClick }) {
                   </button>
                 ))}
               </div>
+              */}
             </>
           )}
-
+          
           {/* ── EDIT CLUB ── */}
           {view==="editClub" && (
             <EditClubForm club={club} onSaved={async()=>{ await load(); setToast({msg:"Club updated!",type:"success"}); setView("overview"); }}/>
