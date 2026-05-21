@@ -41,7 +41,7 @@ export default function ClubPage({ clubId, onBack, onEventClick }) {
       } else {
         await apiCall(`/clubs/${clubId}/subscribe`,"POST");
         setSubscribed(true);
-        setToast({msg:`Subscribed to ${club.name}! You'll get event notifications.`,type:"success"});
+        setToast({msg:`Subscribed to ${club.name}! `,type:"success"});
       }
     } catch(e) { setToast({msg:e.message,type:"error"}); }
     finally { setSubLoading(false); setTimeout(()=>setToast(null),3000); }

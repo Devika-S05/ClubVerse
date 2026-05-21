@@ -592,14 +592,14 @@ function EventCard({ ev, onClick }) {
           <div style={{fontSize:".74rem",color:C.muted,marginBottom:2}}>
             📍 {ev.location}
           </div>
-        )}
+        )}{/*
         {ev.description && (
           <div style={{fontSize:".78rem",color:C.muted,marginTop:4,lineHeight:1.5,
               overflow:"hidden",textOverflow:"ellipsis",
               display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical"}}>
             {ev.description}
           </div>
-        )}
+        )}*/}
       </div>
     </div>
   );
